@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Claude Code / tooling temp
+temp/
+.DS_Store
+
+# Large raw data (keep splits + features, drop the full transaction dump if huge)
