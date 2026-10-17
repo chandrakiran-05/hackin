@@ -1,0 +1,5 @@
+classical_score,label,split,f_source_fan_in,f_source_fan_out,f_source_degree,f_source_scatter,f_source_gather,f_target_fan_in,f_target_fan_out,f_target_degree,f_target_scatter,f_target_gather,f_would_create_cycle
+0.5,0,validation,2.0,2.0,4.0,78.61327416537235,39.44393766791039,1.0,1.0,2.0,45.125,40.0,1.0
+0.5,0,validation,1.0,1.0,2.0,45.125,40.0,2.0,2.0,4.0,78.61327416537235,39.44393766791039,1.0
+0.5,0,test,2.0,2.0,4.0,78.61327416537235,39.44393766791039,1.0,1.0,2.0,45.125,40.0,1.0
+0.5,0,test,1.0,1.0,2.0,45.125,40.0,2.0,2.0,4.0,78.61327416537235,39.44393766791039,1.0

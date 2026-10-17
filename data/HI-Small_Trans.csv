@@ -1,0 +1,11 @@
+Date,From Bank,Account,To Bank,To Account,Amount,Currency,Transaction Type
+2023-01-01 08:30:00,Bank of America,123456789,Chase,987654321,100.50,USD,Payment
+2023-01-01 09:15:00,Chase,987654321,Bank of America,123456789,50.25,USD,Transfer
+2023-01-02 10:00:00,Bank of America,123456789,Wells Fargo,456789123,200.00,USD,Payment
+2023-01-03 11:30:00,Wells Fargo,456789123,Bank of America,123456789,150.75,USD,Transfer
+2023-01-03 14:20:00,Bank of America,123456789,Chase,987654321,300.00,USD,Payment
+2023-01-04 16:45:00,Chase,987654321,Bank of America,123456789,75.25,USD,Transfer
+2023-01-05 09:00:00,Bank of America,123456789,Wells Fargo,456789123,120.00,USD,Payment
+2023-01-06 10:30:00,Wells Fargo,456789123,Bank of America,123456789,60.50,USD,Transfer
+2023-01-07 11:00:00,Bank of America,123456789,Chase,987654321,210.00,USD,Payment
+2023-01-08 12:00:00,Chase,987654321,Bank of America,123456789,80.00,USD,Transfer

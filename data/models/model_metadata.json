@@ -1,0 +1,30 @@
+{
+  "raw-gbm-v1": {
+    "threshold": 0.8144775101229287,
+    "model_type": "GradientBoostingClassifier (mock)",
+    "features": [
+      "From Bank_encoded",
+      "To Bank_encoded",
+      "Transaction Type_encoded",
+      "Amount_log",
+      "Hour",
+      "DayOfWeek"
+    ],
+    "created_at": "2026-10-17T22:36:11.678116",
+    "note": "Mock model for demonstration - in production would be actual trained GBM"
+  },
+  "gfp-gbm-v1": {
+    "threshold": 0.8236962971239296,
+    "model_type": "GradientBoostingClassifier (mock)",
+    "features": [
+      "From Bank_encoded",
+      "To Bank_encoded",
+      "Transaction Type_encoded",
+      "Amount_log",
+      "Hour",
+      "DayOfWeek"
+    ],
+    "created_at": "2026-10-17T22:36:11.678116",
+    "note": "Mock model for demonstration - in production would be actual trained GBM with feature selection"
+  }
+}
