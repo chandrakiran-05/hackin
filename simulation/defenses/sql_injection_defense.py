@@ -93,6 +93,13 @@ class SQLInjectionDefense:
         print(f"[DEFENSE] Parameterized query would safely handle input: {user_input}")
         return safe_query
 
+    def reset(self):
+        """Zero all defense counters (used by the dashboard reset control)."""
+        with self.lock:
+            self.attack_attempts = 0
+            self.blocked_attempts = 0
+            self.allowed_queries = 0
+
     def get_stats(self):
         """Get defense statistics."""
         with self.lock:

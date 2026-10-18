@@ -1,1 +1,12 @@
-Flask==2.3.3
+# Runtime dependencies for the attack-simulation dashboard.
+Flask>=2.3
+requests>=2.31
+
+# Chart.js is vendored at dashboard/static/vendor/chart.umd.js (no CDN needed).
+
+# --- Optional: only needed to run the bundled bank stub + its tests ---
+# (the real banking backend lives on a separate device)
+# fastapi>=0.110
+# uvicorn>=0.29
+# httpx>=0.27
+# pytest>=8.0

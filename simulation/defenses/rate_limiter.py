@@ -20,6 +20,7 @@ class RateLimiter:
         self.requests = defaultdict(list)  # IP -> list of timestamps
         self.blocked_ips = set()
         self.lock = threading.Lock()
+        self._unblock_timers = {}  # IP -> Timer, so they can be cancelled on reset
 
     def is_allowed(self, ip):
         """
@@ -46,19 +47,32 @@ class RateLimiter:
             else:
                 # Block the IP for a period (e.g., 5 minutes)
                 self.blocked_ips.add(ip)
-                # Start a timer to unblock the IP after 5 minutes
-                unblock_timer = threading.Timer(300, self.unblock_ip, args=[ip])
-                unblock_timer.daemon = True
-                unblock_timer.start()
+                # Start a timer to unblock the IP after 5 minutes. Only one
+                # timer per IP; keep a reference so reset() can cancel it.
+                if ip not in self._unblock_timers:
+                    unblock_timer = threading.Timer(300, self.unblock_ip, args=[ip])
+                    unblock_timer.daemon = True
+                    self._unblock_timers[ip] = unblock_timer
+                    unblock_timer.start()
                 print(f"[DEFENSE] IP {ip} blocked for exceeding rate limit ({len(self.requests[ip])} requests in {self.time_window}s)")
                 return False
 
     def unblock_ip(self, ip):
         """Unblock an IP after the block period."""
         with self.lock:
+            self._unblock_timers.pop(ip, None)
             if ip in self.blocked_ips:
                 self.blocked_ips.remove(ip)
                 print(f"[DEFENSE] IP {ip} unblocked")
+
+    def reset(self):
+        """Clear all rate-limit state and cancel pending unblock timers."""
+        with self.lock:
+            for timer in self._unblock_timers.values():
+                timer.cancel()
+            self._unblock_timers.clear()
+            self.requests.clear()
+            self.blocked_ips.clear()
 
     def get_stats(self):
         """Get current statistics."""

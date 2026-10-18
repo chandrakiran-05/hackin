@@ -1,127 +1,114 @@
 # Banking Security Simulation System
 
-This project provides a simulation environment to demonstrate various banking attack types and defense mechanisms. It includes:
+A controlled, judge-ready security-testing tool that demonstrates how a
+synthetic banking defense system responds to scripted attack scenarios. The
+simulator drives traffic through a **real defensive pipeline** (a rate limiter
+and a SQL-injection detector) and, when an allow-listed banking target is
+reachable, records the **actual** response the bank returns.
 
-1. **Attack Simulations**:
-   - DDoS attacks (HTTP, UDP, SYN flood)
-   - SQL Injection attacks (including DDL hijacking)
-   
-2. **Defense Mechanisms**:
-   - Rate limiting
-   - SQL injection detection and prevention
+> **No fabricated outcomes.** Every number on the dashboard — blocked requests,
+> detection rate, bank responses — comes from a real defense decision or a real
+> HTTP response. When the bank target is unreachable, that is reported as
+> `UNREACHABLE` rather than being counted as a "block".
 
-3. **Live Dashboard**:
-   - Web-based interface to visualize attacks and defenses in real-time
-   - Live logs and statistics
+## What it does
 
-## Project Structure
+* **Attack simulation**
+  * DDoS / flood profiles (HTTP, UDP, SYN) — pacing differs per profile.
+  * SQL injection techniques (basic auth-bypass, DDL hijacking, UNION exfil),
+    with benign control traffic interleaved to show false-positive behaviour.
+* **Source simulation** — traffic is spread across a pool of simulated source
+  IP profiles so you can see per-source rate limiting.
+* **Detection visibility** — every generated request is evaluated by the real
+  defense modules in `simulation/defenses/`.
+* **Response verification** — a sampled subset of *allowed* flood requests is
+  forwarded to the configured bank target and the real `ALLOW`/`VERIFY`/`HOLD`
+  response is displayed.
+* **Reliable execution** — thread-safe counters, cooperative cancellation, a
+  one-run-per-kind concurrency cap, bounded thread joins, and a full reset.
+* **Polished dashboard** — live metrics, real throughput and defense-
+  effectiveness charts, a defensive-response panel, a bank-connectivity
+  indicator, and a structured event log.
+
+## Project structure
 
 ```
-.
-├── docs/
-│   ├── attack_types.md        # Description of various attack types
-│   └── case_studies.md        # Real-world bank hack case studies
-├── simulation/
-│   ├── attacks/
-│   │   ├── ddos_simulation.py     # DDoS attack simulation
-│   │   └── sql_injection_simulation.py  # SQL injection simulation
-│   └── defenses/
-│       ├── rate_limiter.py        # Rate limiting defense
-│       └── sql_injection_defense.py   # SQL injection defense
-├── dashboard/
-│   ├── app.py                   # Flask web application
-│   └── templates/
-│       └── index.html           # Dashboard HTML template
-├── requirements.txt             # Python dependencies
-└── README.md                    # This file
+simulation/
+  attacks/
+    ddos_simulation.py            # DDoS generator -> real rate limiter / bank
+    sql_injection_simulation.py   # SQLi payloads  -> real SQLi detector
+  defenses/
+    rate_limiter.py               # sliding-window rate limiter (+ reset)
+    sql_injection_defense.py      # pattern-based SQLi detector (+ reset)
+  test_simulation.py              # proves outcomes are real + cancel/reset
+dashboard/
+  app.py                          # Flask control plane (RunManager + routes)
+  templates/index.html            # dashboard UI (blue theme)
+  static/vendor/chart.umd.js      # vendored Chart.js (offline-friendly)
+  test_app.py                     # route validation / concurrency / reset tests
+bank/                             # LOCAL STUB standing in for the real backend
+docs/                             # attack-type notes and case studies
 ```
 
 ## Installation
 
-1. **Clone or download this repository**
-2. **Install Python dependencies**:
+```bash
+pip install -r requirements.txt
+```
+
+To also run the bundled bank stub and its tests (optional — the real backend
+lives on a separate device), install the extras listed at the bottom of
+`requirements.txt`.
+
+## Running
+
+1. *(Optional)* start the bank stub so response verification has a target:
    ```bash
-   pip install -r requirements.txt
+   python -m uvicorn bank.main:app --host 127.0.0.1 --port 9000
    ```
-
-## Usage
-
-### Running the Simulation Dashboard
-
-1. **Start the Flask application**:
+2. Start the dashboard:
    ```bash
    python dashboard/app.py
    ```
+3. Open <http://localhost:5001>.
 
-2. **Open your web browser** and navigate to:
-   ```
-   http://localhost:5001
-   ```
+If the bank stub is not running, DDoS runs still execute and are verified
+against the rate limiter; bank responses are reported as `UNREACHABLE`.
 
-### Using the Dashboard
+### Configuration
 
-The dashboard provides controls to:
-- **Start DDoS attacks** (HTTP, UDP, or SYN flood) with configurable duration and thread count
-- **Start SQL injection attacks** (basic, DDL hijacking, or UNION-based) with configurable duration and thread count
-- **Test defense mechanisms**:
-  - Rate limiting simulation
-  - SQL injection detection simulation
+| Setting | Env var | Default |
+| --- | --- | --- |
+| Bank target URL | `RF_BANK_URL` | `http://127.0.0.1:9000` |
+| Max threads per run | `SIM_MAX_THREADS` | `20` |
+| Max run duration (s) | `SIM_MAX_DURATION` | `120` |
 
-### Features
+The bank target is restricted to an **allowlist** of loopback lab hosts
+(`127.0.0.1`, `localhost`, `::1`). Runtime config changes are rejected for any
+host outside the allowlist.
 
-- **Real-time visualization** of attack and defense activities
-- **Live logs** showing attack attempts, successes, and blocks
-- **Statistics panel** showing:
-  - Number of DDoS packets sent
-  - SQL injection attempts and blocks
-  - Number of IPs rate-limited
-- **Attack controls** to start/stop different types of attacks
-- **Defense testing** to see how protections work
+### Key endpoints
 
-## Educational Purpose
+| Route | Purpose |
+| --- | --- |
+| `POST /start_ddos`, `POST /start_sql` | start a run (validated) |
+| `POST /stop_ddos`, `POST /stop_sql`, `POST /stop_all` | cancel runs |
+| `POST /reset` | cancel runs, clear defenses, logs and counters |
+| `POST /test_defense` | single-input probe of a defense |
+| `GET /get_status` | live state, stats, bank responses, logs |
+| `GET /bank_status` | bank-target connectivity |
+| `GET/POST /config` | view / adjust bank target + verification |
 
-This simulation is designed for **educational and demonstration purposes only**. It:
-- Does not perform actual attacks on real systems
-- Uses simulated network traffic and requests
-- Is safe to run on localhost
-- Helps understand how attacks work and how defenses mitigate them
+## Testing
 
-## Attack Types Covered
+```bash
+python -m pytest simulation/test_simulation.py dashboard/test_app.py -q
+# plus the bank stub tests (needs the optional extras):
+python -m pytest bank/test_main.py -q
+```
 
-See `docs/attack_types.md` for detailed descriptions of:
-- DDoS attacks
-- SQL Injection (including DDL hijacking)
-- Ransomware
-- Phishing
-- Insider threats
-- Man-in-the-Middle attacks
-- ATM jackpotting
-- Credential stuffing
-- Supply chain attacks
+## Safety
 
-## Case Studies
-
-See `docs/case_studies.md` for real-world examples of:
-- Bangladesh Bank Heist (2016)
-- Capital One Data Breach (2019)
-- Equifax Breach (2017)
-- JPMorgan Chase Breach (2014)
-- Banco Central do Brasil ATM Jackpotting (2016)
-- SOCAR Insider Trading (2008)
-
-## Customization
-
-You can extend this simulation by:
-1. Adding more attack types in the `simulation/attacks/` directory
-2. Adding more defense mechanisms in the `simulation/defenses/` directory
-3. Enhancing the dashboard with more visualizations
-4. Integrating with actual security tools (for advanced users)
-
-## Safety Notice
-
-This simulation is intended to run in a **controlled, isolated environment** (localhost). 
-Do not point the simulations at any real systems or networks without explicit authorization.
-
----
-
-**Generated with [Claude Code](https://claude.com/claude-code)**
+All testing is confined to the authorized synthetic environment on loopback.
+The tool adds no stealth, evasion, or third-party targeting; the target
+allowlist and execution limits are enforced in `dashboard/app.py`.
