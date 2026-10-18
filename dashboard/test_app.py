@@ -163,6 +163,46 @@ def test_config_rejects_non_allowlisted_console(client):
     assert r.status_code == 400
 
 
+def test_range_scenarios_and_start_status(client):
+    # point the target at a closed port so the range uses the local scorer
+    client.post("/config", json={"target_url": "http://127.0.0.1:65531"})
+    sc = client.get("/range/scenarios").get_json()
+    assert any(s["id"] == "credential_impersonation" for s in sc["scenarios"])
+    assert sc["identities"][0]["secret"] == "***redacted***"
+
+    r = client.post("/range/start", json={"scenario": "credential_impersonation",
+                                          "mode": "baseline", "seed": 7, "intensity": 1})
+    assert r.status_code == 200
+    run_id = r.get_json()["run_id"]
+    # live run; poll until it completes
+    for _ in range(40):
+        st = client.get("/range/status?run_id=" + run_id).get_json()
+        if st["status"] != "RUNNING":
+            break
+        time.sleep(0.2)
+    assert st["status"] in ("COMPLETED", "STOPPED")
+    assert st["metrics"]["total_attempts"] > 0
+
+
+def test_range_start_validation(client):
+    assert client.post("/range/start", json={"scenario": "nope"}).status_code == 400
+    assert client.post("/range/start", json={"scenario": "sql_injection",
+                                             "intensity": 99}).status_code == 400
+
+
+def test_range_compare_and_export(client):
+    client.post("/config", json={"target_url": "http://127.0.0.1:65531"})
+    cmp = client.post("/range/compare", json={"scenario": "credential_impersonation",
+                                              "seed": 7, "intensity": 1}).get_json()
+    assert len(cmp["matrix"]) == 3
+    base = next(r for r in cmp["matrix"] if r["mode"] == "baseline")
+    assert base["compromise_state"] == "COMPROMISED"
+    rid = cmp["results"]["classical"]["run_id"]
+    csv = client.get("/range/export?run_id=" + rid + "&fmt=csv")
+    assert csv.status_code == 200
+    assert "correlation_id" in csv.get_data(as_text=True).splitlines()[0]
+
+
 def test_status_exposes_attack_map(client):
     s = client.get("/get_status").get_json()
     assert "map" in s

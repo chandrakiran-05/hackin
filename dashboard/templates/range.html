@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RiskFabric Cyber Range</title>
+    <script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>
+    <style>
+        :root{
+            --bg:#00040d; --panel:#050b1f; --panel2:#030818; --line:rgba(0,191,255,0.25);
+            --fg:#cfe8ff; --cyan:#00bfff; --dim:#5f7f9a; --red:#ff3b3b; --amber:#ffd700;
+            --green:#22d36a; --orange:#ff4500; --purple:#b48cff;
+            --mono:'Courier New',ui-monospace,monospace; --sys:'Segoe UI',system-ui,sans-serif;
+            color-scheme:dark;
+        }
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{background:var(--bg);color:var(--fg);font-family:var(--sys);min-height:100vh}
+        a{color:var(--cyan)}
+        .wrap{max-width:1400px;margin:0 auto;padding:18px 16px 40px;display:flex;flex-direction:column;gap:16px}
+        header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+        h1{font-family:var(--mono);font-size:clamp(1.2rem,3.5vw,1.8rem);letter-spacing:2px;color:var(--cyan);text-shadow:0 0 10px rgba(0,191,255,.5)}
+        .sub{color:var(--dim);font-family:var(--mono);font-size:.72rem;letter-spacing:1px;margin-top:4px}
+        .panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px;box-shadow:0 0 20px rgba(0,191,255,.07)}
+        .panel h2{font-family:var(--mono);font-size:1rem;letter-spacing:1px;color:var(--cyan);border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:14px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+        .panel h2 .hint{font-weight:400;font-size:.66rem;color:var(--dim);letter-spacing:0}
+        .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
+        .cg{display:flex;flex-direction:column;gap:5px;min-width:0}
+        label{font-family:var(--mono);font-size:.68rem;letter-spacing:1px;text-transform:uppercase;color:#9fc4e4}
+        select,input{padding:8px 10px;background:#020a18;border:1px solid var(--line);border-radius:4px;color:var(--fg);font-family:var(--mono);font-size:.85rem}
+        select:focus,input:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 8px rgba(0,191,255,.5)}
+        button{padding:9px 15px;background:rgba(0,191,255,.06);color:var(--cyan);border:1px solid var(--cyan);border-radius:4px;cursor:pointer;font-family:var(--mono);font-weight:700;text-transform:uppercase;letter-spacing:1px;font-size:.75rem;transition:.15s}
+        button:hover:not(:disabled){background:rgba(0,191,255,.16);box-shadow:0 0 12px rgba(0,191,255,.4)}
+        button:disabled{opacity:.35;cursor:not-allowed}
+        button.red{border-color:var(--red);color:var(--red);background:rgba(255,59,59,.06)}
+        button.amb{border-color:var(--amber);color:var(--amber);background:rgba(255,215,0,.06)}
+        button.ghost{border-color:var(--line);color:#9fc4e4;background:transparent}
+        .btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+        .scn-desc{font-family:var(--mono);font-size:.72rem;color:var(--dim);margin-top:10px;line-height:1.5}
+        .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px}
+        .tile{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:12px;text-align:center}
+        .tile h4{font-family:var(--mono);font-size:.62rem;text-transform:uppercase;letter-spacing:1px;color:var(--dim);margin-bottom:6px}
+        .tile .v{font-family:var(--mono);font-size:1.6rem;font-weight:700;font-variant-numeric:tabular-nums}
+        .tile .v.red{color:var(--red)} .tile .v.green{color:var(--green)} .tile .v.amber{color:var(--amber)}
+        .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+        .grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+        @media(max-width:820px){.grid2{grid-template-columns:1fr}}
+        .state-badge{font-family:var(--mono);font-weight:700;font-size:1.3rem;letter-spacing:1px;padding:10px 0}
+        .BLOCKED{color:var(--green)} .CONTAINED{color:var(--green)} .PARTIALLY_COMPROMISED{color:var(--amber)}
+        .COMPROMISED{color:var(--red)} .INCONCLUSIVE{color:var(--dim)}
+        .kv{display:flex;justify-content:space-between;gap:10px;font-family:var(--mono);font-size:.78rem;padding:5px 0;border-bottom:1px solid rgba(0,191,255,.08)}
+        .kv .k{color:var(--dim)} .kv .val{color:var(--fg);font-variant-numeric:tabular-nums}
+        .status-pill{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:20px;padding:6px 12px;font-family:var(--mono);font-size:.72rem;background:var(--panel2)}
+        .dot{width:9px;height:9px;border-radius:50%;background:var(--dim)}
+        .dot.run{background:var(--orange);animation:blink 1s infinite} .dot.done{background:var(--green)} .dot.stop{background:var(--red)}
+        @keyframes blink{50%{opacity:.35}}
+        .tl{height:360px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:12px}
+        .tl .ev{display:grid;grid-template-columns:70px 78px 1fr;gap:8px;padding:6px 8px;border-left:3px solid var(--line);background:rgba(0,0,0,.25);border-radius:0 4px 4px 0;cursor:pointer}
+        .tl .ev:hover{background:rgba(0,191,255,.08)}
+        .tl .ev.sev-high{border-left-color:var(--red)} .tl .ev.sev-medium{border-left-color:var(--amber)}
+        .tl .ev.sev-low{border-left-color:var(--cyan)} .tl .ev.sev-info{border-left-color:var(--dim)}
+        .tl .t{color:var(--dim)} .tl .c{text-transform:uppercase;font-size:10px;letter-spacing:1px}
+        .c.edge{color:var(--cyan)} .c.app{color:var(--purple)} .c.riskfabric{color:var(--amber)} .c.controller{color:var(--dim)}
+        .inspector{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:12px;font-family:var(--mono);font-size:12px;white-space:pre-wrap;word-break:break-word;min-height:60px;color:#9fc4e4}
+        table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11.5px}
+        .twrap{overflow-x:auto}
+        th{text-align:left;color:var(--dim);font-weight:400;text-transform:uppercase;letter-spacing:1px;font-size:9.5px;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+        td{padding:6px 8px;border-bottom:1px solid rgba(0,191,255,.08);color:var(--fg);white-space:nowrap}
+        tr.baseline td{color:#ffb08a} tr.classical td{color:#9fc4e4} tr.quantum td{color:#d8c4ff}
+        .muted{color:var(--dim);font-family:var(--mono);font-size:.76rem}
+        .cw{position:relative;height:200px}
+        details{font-family:var(--mono);font-size:.76rem;color:var(--dim)}
+        summary{cursor:pointer;color:var(--cyan)}
+        .legend{display:flex;gap:16px;flex-wrap:wrap;font-family:var(--mono);font-size:.68rem;color:var(--dim);margin-top:8px}
+        #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(120%);background:var(--panel);border:1px solid var(--cyan);color:var(--cyan);padding:12px 20px;border-radius:6px;font-family:var(--mono);font-size:.8rem;transition:transform .3s;z-index:50}
+        #toast.show{transform:translateX(-50%) translateY(0)}
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <header>
+        <div>
+            <h1>QUANTUM RISKFABRIC &mdash; CYBER RANGE</h1>
+            <div class="sub">ATTACK vs DEFENSE &middot; EVIDENCE-DRIVEN &middot; AUTHORIZED SYNTHETIC ENVIRONMENT &middot; <a href="/">&larr; attack console</a></div>
+        </div>
+        <span class="status-pill"><span class="dot" id="run-dot"></span><span id="run-label">READY</span></span>
+    </header>
+
+    <div class="panel">
+        <h2>ATTACK SIMULATION CONTROLLER <span class="hint">bounded, repeatable, synthetic-only</span></h2>
+        <div class="row">
+            <div class="cg"><label for="scenario">Scenario</label><select id="scenario"></select></div>
+            <div class="cg"><label for="mode">Defense mode</label><select id="mode">
+                <option value="baseline">A &mdash; Baseline bank</option>
+                <option value="classical">B &mdash; Classical RiskFabric</option>
+                <option value="quantum" selected>C &mdash; Quantum RiskFabric</option>
+            </select></div>
+            <div class="cg"><label for="seed">Seed</label><input id="seed" type="number" value="42" style="width:90px"></div>
+            <div class="cg"><label for="intensity">Intensity</label><input id="intensity" type="number" value="1" min="1" max="5" style="width:80px"></div>
+        </div>
+        <div class="btns">
+            <button class="red" id="btn-start" onclick="startRun()">Start Scenario</button>
+            <button class="ghost" id="btn-stop" onclick="stopRun()" disabled>Stop</button>
+            <button class="amb" id="btn-compare" onclick="compareModes()">Compare 3 modes</button>
+            <button class="ghost" id="btn-json" onclick="exportRun('json')" disabled>Export JSON</button>
+            <button class="ghost" id="btn-csv" onclick="exportRun('csv')" disabled>Export CSV</button>
+        </div>
+        <div class="scn-desc" id="scn-desc"></div>
+    </div>
+
+    <div class="panel">
+        <h2>LIVE ATTACK OVERVIEW <span class="hint" id="run-meta"></span></h2>
+        <div class="tiles" id="tiles"></div>
+    </div>
+
+    <div class="grid2">
+        <div class="panel">
+            <h2>COMPROMISE ASSESSMENT <span class="hint">evidence-based</span></h2>
+            <div class="state-badge" id="comp-state">&mdash;</div>
+            <div class="muted" id="comp-evidence">Run a scenario to establish the outcome.</div>
+            <div style="margin-top:12px">
+                <div class="kv"><span class="k">Objective</span><span class="val" id="comp-obj">&mdash;</span></div>
+                <div class="kv"><span class="k">Unauthorized objective successes</span><span class="val" id="comp-succ">0</span></div>
+                <div class="kv"><span class="k">Risk exposure (malicious reaching protected fn)</span><span class="val" id="comp-exp">0%</span></div>
+            </div>
+        </div>
+        <div class="panel">
+            <h2>RISKFABRIC DECISION <span class="hint">model &amp; policy</span></h2>
+            <div id="rf-summary"><span class="muted">No risk evaluations yet.</span></div>
+        </div>
+    </div>
+
+    <div class="grid3">
+        <div class="panel"><h2>EDGE / CDN / WAF <span class="hint">simulated</span></h2><div id="p-edge"></div></div>
+        <div class="panel"><h2>APPLICATION SECURITY <span class="hint">simulated</span></h2><div id="p-app"></div></div>
+        <div class="panel"><h2>DETECTION QUALITY <span class="hint">vs ground truth</span></h2><div id="p-det"></div></div>
+    </div>
+
+    <div class="panel">
+        <h2>ATTACK PROGRESSION TIMELINE <span class="hint">click an event to inspect why the defense decided</span></h2>
+        <div class="grid2">
+            <div class="tl" id="timeline"></div>
+            <div>
+                <div class="muted" style="margin-bottom:6px">EVENT INSPECTOR</div>
+                <div class="inspector" id="inspector">Select a timeline event.</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2>QUANTUM vs CLASSICAL vs BASELINE <span class="hint">identical seeded inputs</span></h2>
+        <div class="twrap"><table id="matrix"><thead></thead><tbody>
+            <tr><td class="muted">Click "Compare 3 modes" to run the matrix.</td></tr>
+        </tbody></table></div>
+        <div class="grid2" style="margin-top:16px">
+            <div><div class="muted" style="text-align:center">Unauthorized ops completed</div><div class="cw"><canvas id="chart-unauth"></canvas></div></div>
+            <div><div class="muted" style="text-align:center">Recall (malicious stopped)</div><div class="cw"><canvas id="chart-recall"></canvas></div></div>
+        </div>
+    </div>
+
+    <div class="panel">
+        <details>
+            <summary>Seeded synthetic identities (fictional &mdash; secrets redacted)</summary>
+            <div class="twrap" style="margin-top:10px"><table id="identities"><thead></thead><tbody></tbody></table></div>
+        </details>
+        <div class="legend">
+            <span>measured: all counts above derive from recorded run events</span>
+            <span>simulated: edge/app layers are modelled components</span>
+            <span>risk backend shown per run (riskfabric-engine or local-classical)</span>
+        </div>
+    </div>
+</div>
+<div id="toast"></div>
+
+<script>
+(function(){
+"use strict";
+const $=s=>document.querySelector(s);
+let scenarios=[], pollTimer=null, currentRun=null, lastEvents=[], charts={}, startMs=0;
+
+function toast(m){const t=$("#toast");t.textContent=m;t.className="show";clearTimeout(t._t);t._t=setTimeout(()=>t.className="",2800);}
+async function api(url,body){
+    const opts=body!==undefined?{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}:{};
+    const r=await fetch(url,opts); let d={}; try{d=await r.json();}catch(e){}
+    if(!r.ok) throw new Error(d.message||("HTTP "+r.status)); return d;
+}
+const T=(id,title,val,cls,sub)=>`<div class="tile"><h4>${title}</h4><div class="v ${cls||''}" id="${id}">${val}</div>${sub?`<div class="muted" style="font-size:.6rem">${sub}</div>`:''}</div>`;
+
+async function loadScenarios(){
+    const d=await api("/range/scenarios");
+    scenarios=d.scenarios;
+    $("#scenario").innerHTML=scenarios.map(s=>`<option value="${s.id}">${s.name}</option>`).join("");
+    describeScenario();
+    // identities
+    const cols=["customer_id","account_id","device_id","login_hours","amount_band","source_network","permitted_actions","secret"];
+    $("#identities thead").innerHTML="<tr>"+cols.map(c=>`<th>${c}</th>`).join("")+"</tr>";
+    $("#identities tbody").innerHTML=d.identities.map(i=>"<tr>"+cols.map(c=>`<td>${Array.isArray(i[c])?i[c].join(" "):i[c]}</td>`).join("")+"</tr>").join("");
+}
+function describeScenario(){
+    const s=scenarios.find(x=>x.id===$("#scenario").value); if(!s)return;
+    $("#scn-desc").innerHTML=`<b>Objective:</b> ${s.objective}<br><b>Ground truth:</b> ${s.ground_truth}`;
+}
+$("#scenario").addEventListener("change",describeScenario);
+
+async function startRun(){
+    try{
+        const d=await api("/range/start",{scenario:$("#scenario").value,mode:$("#mode").value,
+            seed:parseInt($("#seed").value,10)||42,intensity:parseInt($("#intensity").value,10)||1});
+        currentRun=d.run_id; startMs=Date.now();
+        $("#btn-start").disabled=true;$("#btn-stop").disabled=false;$("#btn-json").disabled=false;$("#btn-csv").disabled=false;
+        toast("Run "+d.run_id+" started");
+        if(pollTimer)clearInterval(pollTimer); pollTimer=setInterval(poll,700); poll();
+    }catch(e){toast("Start failed: "+e.message);}
+}
+async function stopRun(){ if(currentRun){try{await api("/range/stop",{run_id:currentRun});}catch(e){}} }
+function exportRun(fmt){ if(currentRun) window.open("/range/export?run_id="+currentRun+"&fmt="+fmt,"_blank"); }
+
+async function poll(){
+    if(!currentRun)return;
+    let st; try{st=await api("/range/status?run_id="+currentRun);}catch(e){return;}
+    render(st);
+    if(st.status!=="RUNNING"){
+        clearInterval(pollTimer);pollTimer=null;
+        $("#btn-start").disabled=false;$("#btn-stop").disabled=true;
+        $("#run-dot").className="dot "+(st.status==="STOPPED"?"stop":"done");
+    } else { $("#run-dot").className="dot run"; }
+    $("#run-label").textContent=st.status;
+}
+
+function render(st){
+    const m=st.metrics, c=st.compromise;
+    $("#run-meta").textContent=`${st.run_id} · ${st.scenario_name} · mode=${st.mode} · seed=${st.seed} · ${st.progressed}/${st.planned}`;
+    const elapsed=((Date.now()-startMs)/1000).toFixed(1);
+    $("#tiles").innerHTML=[
+        T("","Events",m.total_events),
+        T("","Attempts",m.total_attempts),
+        T("","Unique sources",m.unique_sources),
+        T("","Elapsed",elapsed+"s"),
+        T("","Fwd to app",m.forwarded_to_app),
+        T("","Auth failed",m.app_auth_failed,"amber"),
+        T("","Authz denied",m.app_authz_denied,"amber"),
+        T("","Edge blocked",m.edge_blocks_total,"green"),
+        T("","Risk held/review/stepup",m.risk_blocks_total,"green"),
+        T("","Protected reached",m.protected_reached),
+        T("","Unauthorized completed",m.unauthorized_completed,m.unauthorized_completed>0?"red":"green"),
+    ].join("");
+    // compromise
+    $("#comp-state").className="state-badge "+c.state;
+    $("#comp-state").textContent=c.state.replace(/_/g," ");
+    $("#comp-evidence").textContent=c.evidence;
+    $("#comp-obj").textContent=st.objective;
+    $("#comp-succ").textContent=c.objective_successes;
+    const exposure=m.total_attempts?Math.round(100*m.unauthorized_completed/Math.max(1,m.total_attempts)):0;
+    $("#comp-exp").textContent=exposure+"%";
+    // riskfabric summary
+    const backends=Object.entries(m.backends||{}).map(([k,v])=>`<div class="kv"><span class="k">${k}</span><span class="val">${v}</span></div>`).join("")||'<span class="muted">no risk step (baseline)</span>';
+    $("#rf-summary").innerHTML=
+        `<div class="kv"><span class="k">Risk evaluations</span><span class="val">${m.risk_evaluated}</span></div>`
+      +`<div class="kv"><span class="k">HOLD / REVIEW / STEP-UP</span><span class="val">${m.risk_hold} / ${m.risk_review} / ${m.risk_step_up}</span></div>`
+      +`<div class="kv"><span class="k">Decision latency p95</span><span class="val">${(m.latency_risk_ms.p95??'-')} ms</span></div>`
+      +`<div class="kv"><span class="k">Quantum results / fallbacks / timeouts</span><span class="val">${m.quantum_used} / ${m.fallback_events} / ${m.model_timeouts}</span></div>`
+      +`<div style="margin-top:8px" class="muted">Backend usage:</div>`+backends
+      +`<div class="muted" style="margin-top:8px">policy ${st.policy.version}: verify≥${st.policy.verify_at} review≥${st.policy.review_at} hold≥${st.policy.hold_at}</div>`;
+    // layer panels
+    $("#p-edge").innerHTML=kv("Observed",m.edge_observed)+kv("Blocked (WAF)",m.edge_blocked)+kv("Challenged",m.edge_challenged)
+        +kv("Rate-limited",m.edge_rate_limited)+kv("Forwarded",m.forwarded_to_app);
+    $("#p-app").innerHTML=kv("Auth failed",m.app_auth_failed)+kv("Authz denied",m.app_authz_denied)
+        +kv("Validation failed",m.app_validation_failed)+kv("App rate-limited",m.app_rate_limited)+kv("Protected reached",m.protected_reached);
+    $("#p-det").innerHTML=kv("True positive",m.true_positive)+kv("False positive",m.false_positive)
+        +kv("False negative",m.false_negative)+kv("True negative",m.true_negative)
+        +kv("Precision",m.precision??'-')+kv("Recall",m.recall??'-');
+    // timeline
+    lastEvents=st.events;
+    $("#timeline").innerHTML=st.events.slice().reverse().map((e,i)=>{
+        const idx=st.events.length-1-i;
+        return `<div class="ev sev-${e.severity}" data-i="${idx}"><span class="t">${(e.ts||'').slice(11,19)}</span>`
+            +`<span class="c ${e.component}">${e.component}</span>`
+            +`<span>${e.action} &middot; <span class="muted">${e.reason}</span></span></div>`;
+    }).join("");
+    $("#timeline").scrollTop=0;
+}
+const kv=(k,v)=>`<div class="kv"><span class="k">${k}</span><span class="val">${v}</span></div>`;
+
+$("#timeline").addEventListener("click",ev=>{
+    const el=ev.target.closest(".ev"); if(!el)return;
+    const e=lastEvents[+el.dataset.i]; if(!e)return;
+    $("#inspector").textContent=JSON.stringify(e,null,2);
+});
+
+async function compareModes(){
+    $("#btn-compare").disabled=true; toast("Running 3 modes…");
+    try{
+        const d=await api("/range/compare",{scenario:$("#scenario").value,
+            seed:parseInt($("#seed").value,10)||42,intensity:parseInt($("#intensity").value,10)||1});
+        renderMatrix(d);
+    }catch(e){toast("Compare failed: "+e.message);}
+    finally{$("#btn-compare").disabled=false;}
+}
+function renderMatrix(d){
+    const cols=[["mode","Mode"],["generated_events","Events"],["edge_blocks","Edge blk"],["app_blocks","App blk"],
+        ["risk_detections","Risk det"],["unauthorized_completed","Unauth"],["compromise_state","State"],
+        ["false_positives","FP"],["false_negatives","FN"],["precision","Prec"],["recall","Recall"],
+        ["detection_latency_p95_ms","Det p95"],["decision_latency_p95_ms","Dec p95"],["fallback_events","Fallbk"]];
+    $("#matrix thead").innerHTML="<tr>"+cols.map(c=>`<th>${c[1]}</th>`).join("")+"</tr>";
+    $("#matrix tbody").innerHTML=d.matrix.map(r=>`<tr class="${r.mode}">`+cols.map(c=>{
+        let v=r[c[0]]; if(c[0]==="compromise_state")v=(v||'').replace(/_/g,' ');
+        return `<td>${v==null?'-':v}</td>`;}).join("")+"</tr>").join("");
+    const modes=d.matrix.map(r=>r.mode);
+    bar("chart-unauth",modes,d.matrix.map(r=>r.unauthorized_completed),["#ff3b3b","#9fc4e4","#b48cff"]);
+    bar("chart-recall",modes,d.matrix.map(r=>r.recall||0),["#ff3b3b","#9fc4e4","#b48cff"]);
+    toast("Comparison ready");
+}
+function bar(id,labels,data,colors){
+    if(typeof Chart==="undefined")return;
+    if(charts[id])charts[id].destroy();
+    charts[id]=new Chart($("#"+id),{type:"bar",data:{labels,datasets:[{data,backgroundColor:colors,borderWidth:0}]},
+        options:{responsive:true,maintainAspectRatio:false,animation:false,plugins:{legend:{display:false}},
+        scales:{y:{beginAtZero:true,ticks:{color:"#5f7f9a"},grid:{color:"rgba(0,191,255,.08)"}},x:{ticks:{color:"#9fc4e4"},grid:{display:false}}}}});
+}
+
+window.startRun=startRun;window.stopRun=stopRun;window.exportRun=exportRun;window.compareModes=compareModes;
+loadScenarios();
+})();
+</script>
+</body>
+</html>

@@ -28,6 +28,42 @@ run the bank; it points at a RiskFabric instance you host (on loopback).
 | **Reliable execution** | Thread-safe counters, cooperative cancellation, one-run-per-kind concurrency cap, bounded joins, full reset. |
 | **Safety controls** | Target allowlist (loopback only), per-run thread/duration limits, input validation, configurable target. |
 
+## Cyber Range (Attack vs Defense)
+
+A dedicated evidence-driven cyber range lives at **`/range`**. It runs bounded,
+repeatable attack scenarios through a *simulated* defense chain
+(edge/CDN/WAF -> application auth/authz/validation -> RiskFabric risk policy)
+and records a single correlated event stream. Every metric is derived from
+recorded events and an explicit per-attempt **ground-truth label** - no random
+success rates.
+
+* **Run IDs + seeds:** each run has a unique id; the same seed is replayable and
+  lets the three defense modes be compared on identical inputs.
+* **No double counting:** each attempt has exactly one final outcome, so an
+  edge-blocked request is never also counted as an application block.
+* **Compromise state:** `BLOCKED / CONTAINED / PARTIALLY_COMPROMISED /
+  COMPROMISED / INCONCLUSIVE`, with the evidence behind it.
+* **Three modes:** `baseline` (no RiskFabric), `classical` (RiskFabric classical
+  scoring), `quantum` (RiskFabric + quantum challenger when the engine reports it
+  ran). The risk step calls the **real RiskFabric engine** when reachable and a
+  clearly-labelled local classical model otherwise. A result is only labelled
+  quantum when the console confirms the challenger is live.
+* **Scenarios:** credential impersonation (stolen session), password spraying,
+  repeated failed auth, SQL injection, request flood, broken authorization,
+  malformed input, suspicious transaction.
+
+Range routes: `GET /range` (page), `GET /range/scenarios`, `POST /range/start`,
+`POST /range/stop`, `GET /range/status`, `POST /range/compare`,
+`GET /range/export?run_id=&fmt=csv|json`.
+
+**Measured vs simulated:** the edge/app layers are *simulated* (modelled)
+components; their decisions use real rule logic but are not a real CDN. The risk
+decision is *measured* from the RiskFabric engine when connected, else from the
+local classical model (labelled). The quantum-specific contribution is only
+genuine on the VM with the quantum worker and `RF_QML_MODE=rerank`; offline,
+`classical` and `quantum` modes are numerically identical and quantum is flagged
+unavailable.
+
 ## Project structure
 
 ```
@@ -38,12 +74,16 @@ simulation/
   defenses/
     rate_limiter.py               # sliding-window rate limiter (+ reset)
     sql_injection_defense.py      # pattern-based SQLi detector (+ reset)
+  cyber_range.py                  # scenario engine: edge/app/riskfabric pipeline,
+                                  #   ground truth, compromise state, 3-mode compare
   test_simulation.py              # proves outcomes are real + cancel/reset
+  test_cyber_range.py             # run ids, no double-count, ground truth, modes
 dashboard/
-  app.py                          # Flask control plane + RiskFabric TargetClient
-  templates/index.html            # dashboard UI (blue theme, animated attack map)
+  app.py                          # Flask control plane + RiskFabric/console clients
+  templates/index.html            # attack console (blue theme, animated attack map)
+  templates/range.html            # cyber-range ops page (/range)
   static/vendor/chart.umd.js      # vendored Chart.js (offline-friendly)
-  test_app.py                     # route validation / concurrency / scenario tests
+  test_app.py                     # route validation / concurrency / range tests
 docs/                             # attack-type notes and case studies
 ```
 

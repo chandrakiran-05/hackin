@@ -38,6 +38,8 @@ from simulation.attacks.sql_injection_simulation import (
     SQLInjectionSimulator, RunStats as SQLStats)
 from simulation.defenses.rate_limiter import RateLimiter
 from simulation.defenses.sql_injection_defense import SQLInjectionDefense
+from simulation.cyber_range import (
+    CyberRange, scenario_catalogue, public_identities, default_local_scorer)
 
 try:
     import requests  # used for real target response verification
@@ -580,6 +582,50 @@ manager = RunManager()
 
 
 # ---------------------------------------------------------------------------
+# Cyber range - risk scorer that prefers the real RiskFabric engine
+# ---------------------------------------------------------------------------
+def _riskfabric_scorer(features, mode):
+    """classical/quantum modes: use the real RiskFabric engine when reachable;
+    otherwise the labelled local classical model. A quantum result is only
+    labelled quantum when the console confirms the challenger is live."""
+    tc = manager.target
+    try:
+        txn = tc.build_payment(features.get("_from_acct", "SIM-ACC"),
+                               features.get("_to_acct", "MULE-ACC-RANGE"),
+                               features.get("_amount", 100.0),
+                               features.get("_currency", "USD"))
+        res = tc.score(txn)
+    except Exception:
+        res = {"ok": False, "error": "scorer exception"}
+    if res.get("ok"):
+        vocab = {"ALLOW": "ALLOW", "VERIFY": "STEP_UP_VERIFICATION", "HOLD": "TEMPORARY_HOLD",
+                 "REVIEW": "REVIEW", "STEP_UP_VERIFICATION": "STEP_UP_VERIFICATION",
+                 "TEMPORARY_HOLD": "TEMPORARY_HOLD"}
+        decision = vocab.get(res.get("decision"), "REVIEW")
+        backend, quantum = "riskfabric-engine", None
+        if mode == "quantum":
+            feed = manager.console.feed()
+            if feed.get("reachable"):
+                quantum = {"available": True, "source": "console /api/holds",
+                           "agreement": (feed.get("shield") or {}).get("agreement")}
+                backend = "riskfabric-engine + quantum(console)"
+            else:
+                backend = "riskfabric-engine (quantum console unavailable)"
+        return {"score": res.get("score"), "decision": decision,
+                "model": res.get("model") or "riskfabric-engine", "model_version": "engine",
+                "backend": backend, "quantum": quantum, "latency_ms": res.get("latency_ms") or 0.0,
+                "reasons": res.get("reasons", []), "timeout": False, "fallback": False}
+    # fallback: local classical (context-aware), clearly labelled
+    r = default_local_scorer(features, mode)
+    r["fallback"] = True
+    r["backend"] = "local-classical (engine unreachable)"
+    return r
+
+
+range_engine = CyberRange(risk_scorer=_riskfabric_scorer, live_delay=0.06)
+
+
+# ---------------------------------------------------------------------------
 # Input validation helpers
 # ---------------------------------------------------------------------------
 def _validate_run(data, valid_types, default_type, default_threads):
@@ -755,6 +801,91 @@ def config():
                     "verify_target": manager.verify_target,
                     "allowlist": sorted(TARGET_ALLOWLIST),
                     "max_threads": MAX_THREADS, "max_duration": MAX_DURATION})
+
+
+# ---------------------------------------------------------------------------
+# Cyber range routes
+# ---------------------------------------------------------------------------
+@app.route('/range')
+def range_page():
+    return render_template('range.html')
+
+
+@app.route('/range/scenarios')
+def range_scenarios():
+    return jsonify({"scenarios": scenario_catalogue(),
+                    "identities": public_identities(),
+                    "modes": ["baseline", "classical", "quantum"],
+                    "target_url": manager.target.base_url,
+                    "console_url": manager.console.base_url})
+
+
+@app.route('/range/start', methods=['POST'])
+def range_start():
+    data = request.get_json(silent=True) or {}
+    scenario = str(data.get("scenario", ""))
+    mode = str(data.get("mode", "quantum"))
+    try:
+        seed = int(data.get("seed", 42))
+        intensity = int(data.get("intensity", 1))
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "message": "seed and intensity must be integers"}), 400
+    if not (1 <= intensity <= 5):
+        return jsonify({"status": "error", "message": "intensity must be 1..5"}), 400
+    try:
+        run_id = range_engine.start(scenario, mode, seed, intensity, live=True)
+    except ValueError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+    manager.add_event({"message": f"Cyber-range run {run_id}: {scenario} [{mode}] seed={seed}",
+                       "level": "ATTACK", "kind": "range"})
+    return jsonify({"status": "started", "run_id": run_id})
+
+
+@app.route('/range/stop', methods=['POST'])
+def range_stop():
+    data = request.get_json(silent=True) or {}
+    ok = range_engine.stop(str(data.get("run_id", "")))
+    return jsonify({"status": "stopping" if ok else "idle"})
+
+
+@app.route('/range/status')
+def range_status():
+    run_id = request.args.get("run_id", "")
+    st = range_engine.status(run_id)
+    if st is None:
+        return jsonify({"status": "error", "message": "unknown run_id"}), 404
+    return jsonify(st)
+
+
+@app.route('/range/compare', methods=['POST'])
+def range_compare():
+    data = request.get_json(silent=True) or {}
+    scenario = str(data.get("scenario", ""))
+    try:
+        seed = int(data.get("seed", 42))
+        intensity = int(data.get("intensity", 1))
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "message": "seed and intensity must be integers"}), 400
+    if not (1 <= intensity <= 5):
+        return jsonify({"status": "error", "message": "intensity must be 1..5"}), 400
+    try:
+        out = range_engine.compare(scenario, seed, intensity)
+    except ValueError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+    return jsonify(out)
+
+
+@app.route('/range/export')
+def range_export():
+    run_id = request.args.get("run_id", "")
+    fmt = request.args.get("fmt", "json")
+    payload, ctype = range_engine.export(run_id, fmt)
+    if payload is None:
+        return jsonify({"status": "error", "message": "unknown run_id"}), 404
+    if ctype == "text/csv":
+        return app.response_class(payload, mimetype="text/csv",
+                                  headers={"Content-Disposition": f"attachment; filename={run_id}.csv"})
+    return jsonify(payload)
 
 
 @app.route('/get_status')
