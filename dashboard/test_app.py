@@ -192,9 +192,14 @@ def test_range_start_validation(client):
 
 def test_range_compare_and_export(client):
     client.post("/config", json={"target_url": "http://127.0.0.1:65531"})
+    # engine is a closed port here -> must opt into the local reference model
+    blocked = client.post("/range/compare", json={"scenario": "credential_impersonation"})
+    assert blocked.status_code == 409
     cmp = client.post("/range/compare", json={"scenario": "credential_impersonation",
-                                              "seed": 7, "intensity": 1}).get_json()
+                                              "seed": 7, "intensity": 1,
+                                              "allow_local_reference": True}).get_json()
     assert len(cmp["matrix"]) == 3
+    assert cmp["engine_connected"] is False
     base = next(r for r in cmp["matrix"] if r["mode"] == "baseline")
     assert base["compromise_state"] == "COMPROMISED"
     rid = cmp["results"]["classical"]["run_id"]

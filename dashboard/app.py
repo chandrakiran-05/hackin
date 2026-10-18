@@ -151,7 +151,12 @@ class TargetClient:
                     if isinstance(body, dict) else "ok")
             return False, f"HTTP {r.status_code}"
         except Exception as exc:
-            return False, str(exc)
+            msg = str(exc)
+            if "refused" in msg.lower():
+                return False, "connection refused"
+            if "timed out" in msg.lower() or "timeout" in msg.lower():
+                return False, "timed out"
+            return False, msg.split("(Caused by")[0].strip()[:80]
 
     def probe(self, source_ip):
         """
@@ -825,6 +830,10 @@ def range_start():
     data = request.get_json(silent=True) or {}
     scenario = str(data.get("scenario", ""))
     mode = str(data.get("mode", "quantum"))
+    if scenario not in {s["id"] for s in scenario_catalogue()}:
+        return jsonify({"status": "error", "message": f"unknown scenario '{scenario}'"}), 400
+    if mode not in ("baseline", "classical", "quantum"):
+        return jsonify({"status": "error", "message": f"unknown mode '{mode}'"}), 400
     try:
         seed = int(data.get("seed", 42))
         intensity = int(data.get("intensity", 1))
@@ -832,13 +841,24 @@ def range_start():
         return jsonify({"status": "error", "message": "seed and intensity must be integers"}), 400
     if not (1 <= intensity <= 5):
         return jsonify({"status": "error", "message": "intensity must be 1..5"}), 400
+    # Guard: classical/quantum results must come from the real RiskFabric unless
+    # the caller explicitly opts into the local reference model.
+    reachable, detail = manager.target.health()
+    allow_local = bool(data.get("allow_local_reference", False))
+    if mode != "baseline" and not reachable and not allow_local:
+        return jsonify({"status": "error", "engine_connected": False,
+                        "message": (f"RiskFabric is NOT connected ({manager.target.base_url}: {detail}). "
+                                    "Results would come from a LOCAL reference model, not your bank. "
+                                    "Connect it (set RF_TARGET_URL) or re-run with 'use local reference model'.")}), 409
     try:
-        run_id = range_engine.start(scenario, mode, seed, intensity, live=True)
+        run_id = range_engine.start(scenario, mode, seed, intensity, live=True,
+                                    engine_connected=(reachable if mode != "baseline" else None))
     except ValueError as exc:
         return jsonify({"status": "error", "message": str(exc)}), 400
-    manager.add_event({"message": f"Cyber-range run {run_id}: {scenario} [{mode}] seed={seed}",
+    manager.add_event({"message": f"Cyber-range run {run_id}: {scenario} [{mode}] seed={seed} "
+                                  f"engine={'LIVE' if reachable else 'local-reference'}",
                        "level": "ATTACK", "kind": "range"})
-    return jsonify({"status": "started", "run_id": run_id})
+    return jsonify({"status": "started", "run_id": run_id, "engine_connected": reachable})
 
 
 @app.route('/range/stop', methods=['POST'])
@@ -868,10 +888,18 @@ def range_compare():
         return jsonify({"status": "error", "message": "seed and intensity must be integers"}), 400
     if not (1 <= intensity <= 5):
         return jsonify({"status": "error", "message": "intensity must be 1..5"}), 400
+    reachable, detail = manager.target.health()
+    allow_local = bool(data.get("allow_local_reference", False))
+    if not reachable and not allow_local:
+        return jsonify({"status": "error", "engine_connected": False,
+                        "message": (f"RiskFabric is NOT connected ({manager.target.base_url}: {detail}). "
+                                    "The classical/quantum columns would use a LOCAL reference model, not "
+                                    "your bank. Connect it or re-run with 'use local reference model'.")}), 409
     try:
-        out = range_engine.compare(scenario, seed, intensity)
+        out = range_engine.compare(scenario, seed, intensity, engine_connected=reachable)
     except ValueError as exc:
         return jsonify({"status": "error", "message": str(exc)}), 400
+    out["engine_connected"] = reachable
     return jsonify(out)
 
 

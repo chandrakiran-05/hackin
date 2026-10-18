@@ -478,6 +478,7 @@ class RangeRun:
         self.seed = seed
         self.intensity = intensity
         self.status = "READY"
+        self.engine_connected = None   # set by the caller from a live health check
         self.started_at = None
         self.finished_at = None
         self.events = []
@@ -666,6 +667,19 @@ def compute_compromise(run):
             "unauthorized_total": unauth, "threshold": threshold}
 
 
+def _backend_mode(run, metrics):
+    """Whether the risk decisions came from the real engine or the local
+    reference model - so the UI can never present local results as the bank's."""
+    if run.mode == "baseline":
+        return "none (baseline: no RiskFabric)"
+    backends = metrics.get("backends", {})
+    if any(str(b).startswith("riskfabric-engine") for b in backends):
+        return "riskfabric-engine (LIVE)"
+    if backends:
+        return "local-reference model (NOT your RiskFabric)"
+    return "n/a"
+
+
 class CyberRange:
     """Owns runs. ``risk_scorer(features, mode) -> dict`` is injected by the
     dashboard so the RiskFabric step can use the real engine when reachable."""
@@ -708,12 +722,14 @@ class CyberRange:
             run.status = "COMPLETED"
         run.finished_at = _utcnow_iso()
 
-    def start(self, scenario_id, mode="quantum", seed=42, intensity=1, live=True):
+    def start(self, scenario_id, mode="quantum", seed=42, intensity=1, live=True,
+              engine_connected=None):
         if scenario_id not in SCENARIOS:
             raise ValueError(f"unknown scenario '{scenario_id}'")
         if mode not in ("baseline", "classical", "quantum"):
             raise ValueError(f"unknown mode '{mode}'")
         run = self._new_run(scenario_id, mode, int(seed), int(intensity))
+        run.engine_connected = engine_connected
         if live:
             t = threading.Thread(target=self._execute, args=(run, self.live_delay), daemon=True)
             t.start()
@@ -738,6 +754,7 @@ class CyberRange:
         with run.lock:
             recent = [e.as_dict() for e in run.events[-events_limit:]]
             progressed = len(run.attempts)
+        metrics = compute_metrics(run)
         return {
             "run_id": run.run_id, "scenario_id": run.scenario_id,
             "scenario_name": run.scenario["name"], "objective": run.scenario["objective"],
@@ -745,17 +762,19 @@ class CyberRange:
             "seed": run.seed, "intensity": run.intensity, "status": run.status,
             "started_at": run.started_at, "finished_at": run.finished_at,
             "planned": run.total_planned, "progressed": progressed,
-            "metrics": compute_metrics(run), "compromise": compute_compromise(run),
-            "events": recent, "policy": POLICY,
+            "engine_connected": run.engine_connected,
+            "backend_mode": _backend_mode(run, metrics), "metrics": metrics,
+            "compromise": compute_compromise(run), "events": recent, "policy": POLICY,
         }
 
-    def compare(self, scenario_id, seed=42, intensity=1):
+    def compare(self, scenario_id, seed=42, intensity=1, engine_connected=None):
         """Run all three modes on identical seeded inputs and return a matrix."""
         if scenario_id not in SCENARIOS:
             raise ValueError(f"unknown scenario '{scenario_id}'")
         results = {}
         for mode in ("baseline", "classical", "quantum"):
             run = self._new_run(scenario_id, mode, int(seed), int(intensity))
+            run.engine_connected = engine_connected
             self._execute(run, 0.0)
             results[mode] = {"run_id": run.run_id, "metrics": compute_metrics(run),
                              "compromise": compute_compromise(run)}
