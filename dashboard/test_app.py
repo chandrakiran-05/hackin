@@ -112,8 +112,12 @@ def test_scenario_validation(client):
 
 
 def test_scenario_reports_unreachable_without_fabricating(client):
-    # With no RiskFabric target running, the scenario must report the real
-    # unreachable outcome - never a fabricated "caught" result.
+    # Point at a guaranteed-closed loopback port so the test is deterministic
+    # regardless of whether anything else is bound locally.
+    cfg = client.post("/config", json={"target_url": "http://127.0.0.1:65533"})
+    assert cfg.status_code == 200
+    # With no reachable target, the scenario must report the real unreachable
+    # outcome - never a fabricated "caught" result.
     r = client.post("/run_scenario", json={
         "account": "ACC-123", "to_acct": "MULE-9", "currency": "USD",
         "baseline_amount": 100, "fraud_amount": 50000, "source": "Moscow"})

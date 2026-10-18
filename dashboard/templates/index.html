@@ -436,7 +436,8 @@
                      + (leg.reasons && leg.reasons.length ? " &middot; " + leg.reasons.join(", ") : "")
                      + (leg.latency_ms != null ? " &middot; " + leg.latency_ms + "ms" : "");
             } else {
-                meta = leg.error || "no response";
+                const err = leg.error || "no response";
+                meta = err.length > 90 ? err.slice(0, 90) + "…" : err;
             }
             return `<div class="decision-card"><h4>${title} &middot; ${Number(leg.amount).toLocaleString()} </h4>`
                  + `<div class="decision ${cls}">${d}</div>`
