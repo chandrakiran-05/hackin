@@ -6,6 +6,8 @@
     <title>Banking Security Simulation</title>
     <!-- Chart.js is vendored locally so the dashboard works offline / air-gapped. -->
     <script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>
+    <script src="{{ url_for('static', filename='vendor/worldmask.js') }}"></script>
+    <script src="{{ url_for('static', filename='attackmap.js') }}"></script>
     <style>
         :root {
             --bg-color: #00040d;
@@ -118,13 +120,18 @@
         table.ftable td.q { color: var(--warning-color); font-weight: bold; }
         .dchip { font-weight: bold; } .dchip.ALLOW { color: var(--success-color); } .dchip.VERIFY { color: var(--warning-color); } .dchip.HOLD { color: var(--accent-color); }
         /* Attack map */
-        #attackMap { width: 100%; height: 340px; background:
+        #attackMap { width: 100%; height: 400px; background:
             radial-gradient(ellipse at 50% 40%, #021026 0%, #00040d 85%);
             border: 1px solid var(--border-soft); border-radius: 6px; display: block; }
         .map-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; font-family: var(--font-mono);
                       font-size: 0.72rem; color: var(--text-dim); }
         .map-legend span { display: inline-flex; align-items: center; gap: 6px; }
         .swatch { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+        .origin-wrap { overflow-x: auto; margin-top: 12px; }
+        table.origin-table { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 0.74rem; }
+        table.origin-table th { text-align: left; color: var(--text-dim); font-weight: 400; text-transform: uppercase;
+                                letter-spacing: 1px; font-size: 0.62rem; padding: 6px 8px; border-bottom: 1px solid var(--border-soft); white-space: nowrap; }
+        table.origin-table td { padding: 6px 8px; border-bottom: 1px solid rgba(0,191,255,0.08); white-space: nowrap; }
         /* Fraud scenario */
         .scenario-result { display: grid; grid-template-columns: 1fr 1fr auto; gap: 14px; margin-top: 16px; align-items: stretch; }
         @media (max-width: 820px) { .scenario-result { grid-template-columns: 1fr; } }
@@ -253,15 +260,11 @@
         </div>
 
         <div class="panel">
-            <h2>GLOBAL ATTACK MAP <span class="hint">simulated source origins &rarr; bank server; arcs reflect real block/allow</span></h2>
+            <h2>GLOBAL ATTACK MAP <span class="hint">where each source connects from &rarr; bank server &middot; hover an origin for its counts</span></h2>
             <canvas id="attackMap"></canvas>
-            <div class="map-legend">
-                <span><span class="swatch" style="background:#00bfff"></span>origin</span>
-                <span><span class="swatch" style="background:#ff3b3b"></span>rate-limited origin</span>
-                <span><span class="swatch" style="background:#ffd700"></span>bank server</span>
-                <span><span class="swatch" style="background:#22d36a"></span>request reaches server</span>
-                <span><span class="swatch" style="background:#ff3b3b"></span>shed at perimeter</span>
-            </div>
+            <div class="map-legend" id="map-legend"></div>
+            <div class="map-legend"><span>Origins are assigned to lab source IPs (no real geolocation); every count and colour is a real defense decision. Green packets reach the server, red ones are stopped.</span></div>
+            <div class="origin-wrap" id="origin-table"></div>
         </div>
 
         <div class="panel">
@@ -359,9 +362,7 @@
         let targetStatusTimer = null;
 
         // ---- attack map state ----
-        let mapCanvas, mapCtx, mw = 0, mh = 0, dpr = 1;
-        let mapData = { server: null, sources: [], active: false };
-        let packets = [], sparks = [], lastSpawn = 0, sourcesInitialised = false;
+        let attackMap = null, sourcesInitialised = false;
 
         function toast(msg, isError) {
             const t = $("#toast");
@@ -581,92 +582,15 @@
             c.innerHTML = ""; c.appendChild(frag); c.scrollTop = c.scrollHeight;
         }
 
-        // ---- attack map ----
+        // ---- attack map (static/attackmap.js) ----
         function initAttackMap() {
-            mapCanvas = $("#attackMap");
-            if (!mapCanvas) return;
-            mapCtx = mapCanvas.getContext("2d");
-            sizeMap(); window.addEventListener("resize", sizeMap);
-            requestAnimationFrame(mapLoop);
+            attackMap = window.AttackMap && window.AttackMap.mount($("#attackMap"));
+            if (window.AttackMap) $("#map-legend").innerHTML = window.AttackMap.legend();
         }
-        function sizeMap() {
-            dpr = window.devicePixelRatio || 1;
-            const rect = mapCanvas.getBoundingClientRect();
-            mw = Math.max(320, Math.floor(rect.width)); mh = 340;
-            mapCanvas.width = Math.floor(mw * dpr); mapCanvas.height = Math.floor(mh * dpr);
-            mapCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        }
-        const proj = (lat, lng) => ({ x: ((lng + 180) / 360) * mw, y: ((90 - lat) / 180) * mh });
-        function arcPoint(a, b, t) {
-            const lift = Math.min(120, Math.abs(a.x - b.x) * 0.22 + 50);
-            const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2 - lift;
-            const mt = 1 - t;
-            return { x: mt * mt * a.x + 2 * mt * t * cx + t * t * b.x,
-                     y: mt * mt * a.y + 2 * mt * t * cy + t * t * b.y };
-        }
-        function drawMapBg() {
-            mapCtx.clearRect(0, 0, mw, mh);
-            mapCtx.strokeStyle = "rgba(0,191,255,0.07)"; mapCtx.lineWidth = 0.5;
-            for (let lng = -180; lng <= 180; lng += 30) { const x = ((lng + 180) / 360) * mw; mapCtx.beginPath(); mapCtx.moveTo(x, 0); mapCtx.lineTo(x, mh); mapCtx.stroke(); }
-            for (let lat = -60; lat <= 60; lat += 30) { const y = ((90 - lat) / 180) * mh; mapCtx.beginPath(); mapCtx.moveTo(0, y); mapCtx.lineTo(mw, y); mapCtx.stroke(); }
-        }
-        function drawNode(p, r, color, label) {
-            mapCtx.fillStyle = color; mapCtx.shadowColor = color; mapCtx.shadowBlur = 10;
-            mapCtx.beginPath(); mapCtx.arc(p.x, p.y, r, 0, Math.PI * 2); mapCtx.fill(); mapCtx.shadowBlur = 0;
-            if (label) { mapCtx.fillStyle = "rgba(135,206,250,0.8)"; mapCtx.font = "10px monospace";
-                         mapCtx.fillText(label, p.x + r + 3, p.y + 3); }
-        }
-        function spawnPackets() {
-            if (!mapData.active || !mapData.server) return;
-            mapData.sources.forEach((s, i) => {
-                if (Math.random() < 0.55) packets.push({ i: i, t: 0, blocked: !!s.blocked, speed: 0.012 + Math.random() * 0.01 });
-            });
-            if (packets.length > 240) packets.splice(0, packets.length - 240);
-        }
-        function mapLoop(ts) {
-            if (!mapCtx) return;
-            drawMapBg();
-            const server = mapData.server ? proj(mapData.server.lat, mapData.server.lng) : null;
-            // static arcs
-            if (server) {
-                mapData.sources.forEach((s) => {
-                    const a = proj(s.lat, s.lng);
-                    mapCtx.strokeStyle = s.blocked ? "rgba(255,59,59,0.18)" : "rgba(0,191,255,0.18)";
-                    mapCtx.lineWidth = 1; mapCtx.beginPath(); mapCtx.moveTo(a.x, a.y);
-                    for (let t = 0.05; t <= 1.0; t += 0.05) { const q = arcPoint(a, server, t); mapCtx.lineTo(q.x, q.y); }
-                    mapCtx.stroke();
-                });
-            }
-            if (mapData.active && ts - lastSpawn > 130) { spawnPackets(); lastSpawn = ts; }
-            // packets
-            packets = packets.filter((p) => {
-                const s = mapData.sources[p.i]; if (!s || !server) return false;
-                p.t += p.speed;
-                const maxT = p.blocked ? 0.5 : 1.0;
-                if (p.t >= maxT) {
-                    const a = proj(s.lat, s.lng); const pos = arcPoint(a, server, maxT);
-                    sparks.push({ x: pos.x, y: pos.y, life: 1, blocked: p.blocked }); return false;
-                }
-                const a = proj(s.lat, s.lng); const pos = arcPoint(a, server, p.t);
-                const color = p.blocked ? "#ff3b3b" : "#22d36a";
-                mapCtx.fillStyle = color; mapCtx.shadowColor = color; mapCtx.shadowBlur = 8;
-                mapCtx.beginPath(); mapCtx.arc(pos.x, pos.y, 2.4, 0, Math.PI * 2); mapCtx.fill(); mapCtx.shadowBlur = 0;
-                return true;
-            });
-            // sparks
-            sparks = sparks.filter((sp) => {
-                sp.life -= 0.06; if (sp.life <= 0) return false;
-                mapCtx.fillStyle = (sp.blocked ? "rgba(255,59,59," : "rgba(34,211,106,") + sp.life + ")";
-                mapCtx.beginPath(); mapCtx.arc(sp.x, sp.y, (1 - sp.life) * 9 + 2, 0, Math.PI * 2); mapCtx.fill();
-                return true;
-            });
-            // origin + server nodes on top
-            mapData.sources.forEach((s) => drawNode(proj(s.lat, s.lng), 3.5, s.blocked ? "#ff3b3b" : "#00bfff", s.label));
-            if (server && mapData.server) {
-                const pulse = 7 + Math.sin(ts / 220) * 2;
-                drawNode(server, pulse, "#ffd700", mapData.server.label);
-            }
-            requestAnimationFrame(mapLoop);
+        function updateAttackMap(map) {
+            if (!map || !attackMap) return;
+            attackMap.update({ server: map.server, active: map.active, origins: map.origins || [] });
+            window.AttackMap.table($("#origin-table"), map.origins);
         }
 
         function initCharts() {
@@ -702,7 +626,7 @@
                 const data = await api("/get_status");
                 setButtons(data); setStats(data); updateThroughput(data);
                 updateDefenseChart(data); updateTargetPanel(data); renderLogs(data.logs);
-                mapData = data.map || mapData;
+                updateAttackMap(data.map);
                 populateSources(data.map && data.map.sources);
                 $("#target-label").textContent = "TARGET: " + (data.target.configured_url || "n/a");
                 if (data.scenario && !$("#scenario-result").innerHTML) renderScenario(data.scenario);

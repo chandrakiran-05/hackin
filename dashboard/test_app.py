@@ -214,3 +214,39 @@ def test_status_exposes_attack_map(client):
     assert s["map"]["server"]["label"]
     assert len(s["map"]["sources"]) >= 1
     assert "lat" in s["map"]["sources"][0] and "ip" in s["map"]["sources"][0]
+
+
+def test_attack_map_origins_carry_real_counts(client):
+    """The map's per-source counts come from the defense decisions the simulators actually received."""
+    from dashboard import geo
+    tally = geo.OriginTally(["10.0.0.11"])
+    limiter = geo.TappedRateLimiter(dash.RateLimiter(max_requests=2, time_window=60), tally)
+    results = [limiter.is_allowed("10.0.0.12") for _ in range(5)]
+    snap = {o["ip"]: o for o in tally.snapshot()}
+    o = snap["10.0.0.12"]
+    assert o["requests"] == 5 and o["passed"] == results.count(True) and o["stopped"] == results.count(False)
+    assert o["status"] == "blocked" and o["city"] == "London" and o["placed"] == "assigned"
+    assert snap["10.0.0.11"]["requests"] == 0 and snap["10.0.0.11"]["status"] == "idle"
+    sql = geo.TappedSQLDefense(dash.SQLInjectionDefense(), tally)
+    assert sql.check_query("admin' OR '1'='1", "10.0.0.13")[0] is False
+    assert {o["ip"]: o for o in tally.snapshot()}["10.0.0.13"]["kinds"] == {"sql": 1}
+    s = client.get("/get_status").get_json()
+    assert {o["ip"] for o in s["map"]["origins"]} >= set(dash.SOURCE_IPS)
+
+
+def test_unlisted_ip_is_placed_by_hash_and_flagged():
+    from dashboard import geo
+    a, b = geo.locate("203.0.113.99"), geo.locate("203.0.113.99")
+    assert a == b and a["placed"] == "hashed" and a["role"] == "unlisted source"
+
+
+def test_range_status_exposes_origin_map(client):
+    from dashboard import geo
+    rows = geo.origins_from_attempts([
+        {"source_ip": "45.83.100.7", "stopped": True, "is_malicious": True, "outcome": "edge_blocked", "kind": "request"},
+        {"source_ip": "45.83.100.7", "stopped": False, "is_malicious": True, "outcome": "unauthorized_success", "kind": "transaction"},
+        {"source_ip": "198.51.100.20", "stopped": False, "is_malicious": False, "outcome": "allowed", "kind": "transaction"},
+    ])
+    by = {o["ip"]: o for o in rows}
+    assert by["45.83.100.7"]["status"] == "breached" and by["45.83.100.7"]["breached"] == 1
+    assert by["198.51.100.20"]["status"] == "passing" and by["198.51.100.20"]["city"] == "Paris"

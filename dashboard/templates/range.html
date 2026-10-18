@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RiskFabric Cyber Range</title>
     <script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>
+    <script src="{{ url_for('static', filename='vendor/worldmask.js') }}"></script>
+    <script src="{{ url_for('static', filename='attackmap.js') }}"></script>
     <style>
         :root{
             --bg:#00040d; --panel:#050b1f; --panel2:#030818; --line:rgba(0,191,255,0.25);
@@ -78,6 +80,11 @@
         .stamp.live{background:rgba(34,211,106,.14);border:1px solid var(--green);color:var(--green)}
         .stamp.local{background:rgba(255,59,59,.14);border:1px solid var(--red);color:var(--red)}
         .stamp.base{background:rgba(95,127,154,.14);border:1px solid var(--dim);color:var(--dim)}
+        #rangeMap{width:100%;display:block;border:1px solid rgba(0,191,255,.15);border-radius:6px;background:radial-gradient(ellipse at 50% 40%,#021026 0%,#00040d 85%)}
+        .map-legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-family:var(--mono);font-size:.68rem;color:var(--dim)}
+        .map-legend span{display:inline-flex;align-items:center;gap:6px}
+        .swatch{width:10px;height:10px;border-radius:50%;display:inline-block}
+        table.origin-table td{color:var(--fg)}
         .chk{display:flex;gap:7px;align-items:center;font-family:var(--mono);font-size:.72rem;color:#9fc4e4;text-transform:none;letter-spacing:0;cursor:pointer}
         .chk input{width:auto;min-width:0}
         #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(120%);background:var(--panel);border:1px solid var(--cyan);color:var(--cyan);padding:12px 20px;border-radius:6px;font-family:var(--mono);font-size:.8rem;transition:transform .3s;z-index:50;max-width:92%}
@@ -123,6 +130,14 @@
         <h2>LIVE ATTACK OVERVIEW <span class="hint" id="run-meta"></span></h2>
         <div id="backend-stamp" style="margin-bottom:12px"></div>
         <div class="tiles" id="tiles"></div>
+    </div>
+
+    <div class="panel">
+        <h2>ATTACK ORIGIN MAP <span class="hint">where this run's sources connect from &rarr; bank datacenter &middot; hover an origin</span></h2>
+        <canvas id="rangeMap"></canvas>
+        <div class="map-legend" id="range-map-legend"></div>
+        <div class="map-legend"><span>Origins are assigned to the simulation's lab IPs (no real geolocation); counts and colours are this run's recorded outcomes.</span></div>
+        <div class="twrap" id="range-origins" style="margin-top:10px"></div>
     </div>
 
     <div class="grid2">
@@ -189,6 +204,9 @@
 "use strict";
 const $=s=>document.querySelector(s);
 let scenarios=[], pollTimer=null, currentRun=null, lastEvents=[], charts={}, startMs=0;
+const rangeMap=window.AttackMap?window.AttackMap.mount($("#rangeMap"),{bounds:window.AttackMap.EUROPE}):null;
+if(window.AttackMap){$("#range-map-legend").innerHTML=window.AttackMap.legend();window.AttackMap.table($("#range-origins"),[]);}
+function renderMap(map){ if(!map||!rangeMap)return; rangeMap.update(map); window.AttackMap.table($("#range-origins"),map.origins); }
 
 function toast(m){const t=$("#toast");t.textContent=m;t.className="show";clearTimeout(t._t);t._t=setTimeout(()=>t.className="",2800);}
 async function api(url,body){
@@ -242,6 +260,7 @@ async function poll(){
 
 function render(st){
     const m=st.metrics, c=st.compromise;
+    renderMap(st.map);
     $("#run-meta").textContent=`${st.run_id} · ${st.scenario_name} · mode=${st.mode} · seed=${st.seed} · ${st.progressed}/${st.planned}`;
     // backend stamp - makes it impossible to mistake local results for the bank's
     const bm=st.backend_mode||"", scls=/LIVE/.test(bm)?"live":(/local-reference/.test(bm)?"local":"base");

@@ -40,6 +40,7 @@ from simulation.defenses.rate_limiter import RateLimiter
 from simulation.defenses.sql_injection_defense import SQLInjectionDefense
 from simulation.cyber_range import (
     CyberRange, scenario_catalogue, public_identities, default_local_scorer)
+from dashboard import geo
 
 try:
     import requests  # used for real target response verification
@@ -76,22 +77,16 @@ VALID_SQL_TYPES = {"basic", "ddl", "union"}
 # target requires editing this set (enforced for config changes).
 TARGET_ALLOWLIST = {"127.0.0.1", "localhost", "::1"}
 
-# Simulated source identities, each pinned to a geographic origin so the attack
-# map can draw stable arcs from each origin toward the server. These are lab
-# source IPs (RFC 1918) used only against the authorized loopback target.
-SOURCE_PROFILES = [
-    {"ip": "10.0.0.11", "label": "New York",   "lat": 40.71,  "lng": -74.01},
-    {"ip": "10.0.0.12", "label": "London",     "lat": 51.51,  "lng": -0.13},
-    {"ip": "10.0.0.13", "label": "Moscow",     "lat": 55.76,  "lng": 37.62},
-    {"ip": "10.0.0.14", "label": "Singapore",  "lat": 1.35,   "lng": 103.82},
-    {"ip": "10.0.0.15", "label": "Sao Paulo",  "lat": -23.55, "lng": -46.63},
-    {"ip": "10.0.0.16", "label": "Lagos",      "lat": 6.52,   "lng": 3.38},
-    {"ip": "10.0.0.17", "label": "Sydney",     "lat": -33.87, "lng": 151.21},
-    {"ip": "10.0.0.18", "label": "Mumbai",     "lat": 19.08,  "lng": 72.88},
-]
-SOURCE_IPS = [p["ip"] for p in SOURCE_PROFILES]
+# Simulated source identities, each pinned to an assigned origin (dashboard/geo.py)
+# so the attack map can draw stable arcs from each origin toward the server. These
+# are lab source IPs (RFC 1918) used only against the authorized loopback target.
+SOURCE_IPS = ["10.0.0.11", "10.0.0.12", "10.0.0.13", "10.0.0.14",
+              "10.0.0.15", "10.0.0.16", "10.0.0.17", "10.0.0.18"]
+SOURCE_PROFILES = [{"ip": ip, "label": geo.ORIGINS[ip]["city"],
+                    "lat": geo.ORIGINS[ip]["lat"], "lng": geo.ORIGINS[ip]["lng"]}
+                   for ip in SOURCE_IPS]
 # Where the bank/server is drawn on the map (purely for visualization).
-SERVER_LOCATION = {"label": "Bank Datacenter", "lat": 50.11, "lng": 8.68}
+SERVER_LOCATION = dict(geo.SERVER)
 
 
 def _utcnow_iso():
@@ -336,6 +331,9 @@ class RunManager:
         self.console = ConsoleClient()
         self.dataset_path = DEFAULT_DATASET_CSV
 
+        # real per-source counts for the attack map, fed by every defense decision
+        self.origins = geo.OriginTally(SOURCE_IPS)
+
         self._logs = deque(maxlen=MAX_LOGS)
         self._runs = {"ddos": None, "sql": None}
         self._last_scenario = None
@@ -396,7 +394,7 @@ class RunManager:
         self.add_event(event)
 
     def start_ddos(self, attack_type, duration, threads):
-        sim = DDoSSimulator(defense=self.rate_limiter,
+        sim = DDoSSimulator(defense=geo.TappedRateLimiter(self.rate_limiter, self.origins),
                             bank_client=self.target if self.verify_target else None,
                             source_ips=SOURCE_IPS)
         stats = DDoSStats(attack_type=attack_type, started_at=_utcnow_iso())
@@ -410,7 +408,8 @@ class RunManager:
                                     "threads": threads}, target_fn, stats_ref=stats)
 
     def start_sql(self, attack_type, duration, threads):
-        sim = SQLInjectionSimulator(defense=self.sql_defense, source_ips=SOURCE_IPS)
+        sim = SQLInjectionSimulator(defense=geo.TappedSQLDefense(self.sql_defense, self.origins),
+                                    source_ips=SOURCE_IPS)
         stats = SQLStats(attack_type=attack_type, started_at=_utcnow_iso())
 
         def target_fn(cancel, on_event):
@@ -450,6 +449,7 @@ class RunManager:
                 t.join(timeout=max(0.1, deadline - time.time()))
         self.rate_limiter.reset()
         self.sql_defense.reset()
+        self.origins.reset()
         with self._lock:
             self._runs = {"ddos": None, "sql": None}
             self._last_scenario = None
@@ -575,6 +575,10 @@ class RunManager:
                 "active": active,
                 "sources": [dict(p, blocked=(p["ip"] in blocked_ips))
                             for p in SOURCE_PROFILES],
+                # every source with its assigned origin and its real counts
+                "origins": [dict(o, rate_limited=(o["ip"] in blocked_ips))
+                            for o in self.origins.snapshot()],
+                "note": "Lab source IPs with assigned origins; counts are real defense decisions.",
             },
             "scenario": scenario,
             "config": {"max_threads": MAX_THREADS, "max_duration": MAX_DURATION,
@@ -874,6 +878,12 @@ def range_status():
     st = range_engine.status(run_id)
     if st is None:
         return jsonify({"status": "error", "message": "unknown run_id"}), 404
+    run = range_engine.get(run_id)
+    with run.lock:
+        attempts = list(run.attempts)
+    st["map"] = {"server": SERVER_LOCATION, "active": st["status"] == "RUNNING",
+                 "origins": geo.origins_from_attempts(attempts),
+                 "note": "Lab source IPs with assigned origins; counts are this run's recorded outcomes."}
     return jsonify(st)
 
 

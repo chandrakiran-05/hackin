@@ -21,7 +21,7 @@ run the bank; it points at a RiskFabric instance you host (on loopback).
 | **DDoS / flood simulation** | HTTP, UDP and SYN profiles, multi-threaded, across a pool of simulated source IPs. Each request is evaluated by the real rate limiter; a sampled subset of allowed requests is sent to the RiskFabric channel to record its real `ALLOW`/`VERIFY`/`HOLD`. |
 | **SQL-injection simulation** | Basic auth-bypass, DDL hijacking and UNION exfiltration payloads, interleaved with benign control traffic. Every payload is judged by the real SQL-injection detector; the reported detection rate is genuine. |
 | **Stolen-session fraud test** | Submits a baseline legitimate transfer and an anomalous high-value transfer from the *same* account to a new payee, then shows the engine/ML's real decision and score for each — a direct account-takeover detection check. No credential theft is performed; it only sends transactions. |
-| **Global attack map** | Animated origins → bank-server arcs. Each simulated source IP is pinned to a city; request arcs are green when they reach the server and red/shed at the perimeter when the origin is rate-limited — driven by real block state. |
+| **Global attack map** | Dot-matrix world map (offline, Natural Earth land mask) showing where every source connects from. Each source IP is pinned to an *assigned* origin (`dashboard/geo.py`; lab IPs have no real geolocation). Origin size = requests, colour = what the defenses did (cyan reaching the server, orange partly stopped, red blocked/shed, magenta objective reached); packets fly along the arcs in the real stopped/passed ratio. Hover an origin for its counts; the origins table lists IP, origin, role, requests, stopped, passed, stop rate and traffic type. The counts come from a tap on every rate-limiter / SQLi-detector decision, not from sampled logs. The cyber range (`/range`) has the same map for each run, from its recorded outcomes. |
 | **Live defense feed** | Reads the RiskFabric console APIs so one tab shows engine decisions (ALLOW/VERIFY/HOLD, hold-rate vs cap, latency), the quantum shadow-vs-engine agreement, and the held transactions with their per-transaction quantum challenger score. |
 | **Dataset-seeded fraud test** | Load a real account/transaction from the synthetic dataset into the fraud test, then send it (or a tampered high-value version) to the engine. |
 | **Live metrics & charts** | Real throughput (req/s from request deltas), real blocked/allowed effectiveness, blocked-IP count, SQLi detection rate. |
@@ -80,6 +80,10 @@ simulation/
   test_cyber_range.py             # run ids, no double-count, ground truth, modes
 dashboard/
   app.py                          # Flask control plane + RiskFabric/console clients
+  geo.py                          # assigned origins for lab IPs + real per-source counts (attack map)
+  static/attackmap.js             # attack map + origins table (console and /range)
+  static/vendor/worldmask.js      # offline land mask (built by tools/build_worldmask.py)
+  tools/build_worldmask.py        # rebuilds the land mask from world-atlas land-110m.json
   templates/index.html            # attack console (blue theme, animated attack map)
   templates/range.html            # cyber-range ops page (/range)
   static/vendor/chart.umd.js      # vendored Chart.js (offline-friendly)
