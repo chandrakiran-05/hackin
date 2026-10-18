@@ -60,6 +60,13 @@ MAX_THREADS = int(os.getenv("SIM_MAX_THREADS", "20"))
 MAX_DURATION = int(os.getenv("SIM_MAX_DURATION", "120"))
 MAX_LOGS = 300
 
+# The RiskFabric console (read-only defender dashboard) exposes the live
+# decisions, held transactions + quantum challenger scores and shadow agreement.
+DEFAULT_CONSOLE_URL = os.getenv("RF_CONSOLE_URL", "http://127.0.0.1:8500")
+# Synthetic dataset used to seed the fraud test with real accounts/transactions.
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_DATASET_CSV = os.getenv("RF_DATASET_CSV", os.path.join(_REPO, "data", "HI-Small_Trans.csv"))
+
 VALID_DDOS_TYPES = {"http", "udp", "syn"}
 VALID_SQL_TYPES = {"basic", "ddl", "union"}
 
@@ -204,6 +211,86 @@ class TargetClient:
 
 
 # ---------------------------------------------------------------------------
+# Console client - reads the RiskFabric defender dashboard (read-only)
+# ---------------------------------------------------------------------------
+class ConsoleClient:
+    """Reads the RiskFabric console APIs so the attacker dashboard can show the
+    real engine decisions and quantum challenger scores. Read-only; never
+    fabricates - an unreachable console is reported as such."""
+
+    def __init__(self, base_url=DEFAULT_CONSOLE_URL, timeout=2.0):
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+
+    def _get(self, path):
+        if requests is None or not _host_allowed(self.base_url):
+            return None
+        try:
+            r = requests.get(f"{self.base_url}{path}", timeout=self.timeout)
+            if r.status_code == 200:
+                return r.json()
+        except Exception:
+            return None
+        return None
+
+    def feed(self):
+        """Aggregate the panels the attacker view needs. reachable is True only
+        if the console answered at least the decisions endpoint."""
+        decisions = self._get("/api/decisions")
+        shield = self._get("/api/shield")
+        quantum = self._get("/api/quantum/summary")
+        holds = self._get("/api/holds?n=20")
+        reachable = decisions is not None
+        held = (holds or {}).get("holds", []) if isinstance(holds, dict) else []
+        return {
+            "reachable": reachable,
+            "url": self.base_url,
+            "decisions": decisions,
+            "shield": shield,
+            "quantum": quantum if isinstance(quantum, dict) and not quantum.get("empty") else None,
+            "holds": held,
+            "challenger_label": (holds or {}).get("challenger_label") if isinstance(holds, dict) else None,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Dataset reader - seeds the fraud test with real accounts/transactions
+# ---------------------------------------------------------------------------
+def load_dataset(path, limit=200):
+    """Read the synthetic AML dataset. Returns (rows, meta). Never raises."""
+    import csv
+    rows, err = [], None
+    try:
+        with open(path, newline="", encoding="utf-8") as fh:
+            reader = csv.DictReader(fh)
+            for i, r in enumerate(reader):
+                if i >= limit:
+                    break
+                frm_bank = (r.get("From Bank") or "").strip()
+                frm_acc = (r.get("Account") or "").strip()
+                to_bank = (r.get("To Bank") or "").strip()
+                to_acc = (r.get("To Account") or "").strip()
+                try:
+                    amount = float(r.get("Amount") or 0)
+                except ValueError:
+                    amount = 0.0
+                from_acct = f"{frm_bank}-{frm_acc}" if frm_bank else frm_acc
+                to_acct = f"{to_bank}-{to_acc}" if to_bank else to_acc
+                rows.append({
+                    "from_acct": from_acct, "to_acct": to_acct,
+                    "amount": amount, "currency": (r.get("Currency") or "USD").strip(),
+                    "type": (r.get("Transaction Type") or "").strip(),
+                    "date": (r.get("Date") or "").strip(),
+                    "label": f"{from_acct} -> {to_acct}  ({amount:g} {(r.get('Currency') or 'USD').strip()})",
+                })
+    except FileNotFoundError:
+        err = f"dataset not found: {path}"
+    except Exception as exc:  # pragma: no cover - defensive
+        err = str(exc)
+    return rows, err
+
+
+# ---------------------------------------------------------------------------
 # Run manager - owns shared state and background runs
 # ---------------------------------------------------------------------------
 class RunManager:
@@ -213,6 +300,8 @@ class RunManager:
         self.sql_defense = SQLInjectionDefense()
         self.target = TargetClient()
         self.verify_target = True
+        self.console = ConsoleClient()
+        self.dataset_path = DEFAULT_DATASET_CSV
 
         self._logs = deque(maxlen=MAX_LOGS)
         self._runs = {"ddos": None, "sql": None}
@@ -575,6 +664,20 @@ def test_defense():
     return jsonify({'status': 'error', 'message': 'Invalid test type'}), 400
 
 
+@app.route('/console_feed')
+def console_feed():
+    """Live defender view from the RiskFabric console: decisions, shield
+    agreement, held transactions and their quantum challenger scores."""
+    return jsonify(manager.console.feed())
+
+
+@app.route('/dataset')
+def dataset():
+    rows, err = load_dataset(manager.dataset_path)
+    return jsonify({"path": manager.dataset_path, "count": len(rows),
+                    "rows": rows, "error": err})
+
+
 @app.route('/target_status')
 def target_status():
     reachable, detail = manager.target.health()
@@ -595,8 +698,18 @@ def config():
                 return jsonify({"status": "error",
                                 "message": "target_url host not in allowlist"}), 400
             manager.target = TargetClient(base_url=url)
+        if data.get('console_url'):
+            curl = str(data['console_url'])
+            if not _host_allowed(curl):
+                return jsonify({"status": "error",
+                                "message": "console_url host not in allowlist"}), 400
+            manager.console = ConsoleClient(base_url=curl)
+        if data.get('dataset_path'):
+            manager.dataset_path = str(data['dataset_path'])
         manager.add_event({"message": "Configuration updated", "level": "INFO"})
     return jsonify({"target_url": manager.target.base_url,
+                    "console_url": manager.console.base_url,
+                    "dataset_path": manager.dataset_path,
                     "verify_target": manager.verify_target,
                     "allowlist": sorted(TARGET_ALLOWLIST),
                     "max_threads": MAX_THREADS, "max_duration": MAX_DURATION})

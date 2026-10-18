@@ -129,6 +129,28 @@ def test_scenario_reports_unreachable_without_fabricating(client):
     assert result["caught"] is False                # not fabricated
 
 
+def test_dataset_lists_real_accounts(client):
+    d = client.get("/dataset").get_json()
+    assert d["count"] >= 1
+    row = d["rows"][0]
+    assert "from_acct" in row and "to_acct" in row and "amount" in row
+    # account id uses the <Bank>-<Account> convention
+    assert "-" in row["from_acct"]
+
+
+def test_console_feed_reports_unreachable_without_console(client):
+    # Pin to a guaranteed-closed port so the test is deterministic.
+    assert client.post("/config", json={"console_url": "http://127.0.0.1:65532"}).status_code == 200
+    f = client.get("/console_feed").get_json()
+    assert f["reachable"] is False
+    assert f["holds"] == []
+
+
+def test_config_rejects_non_allowlisted_console(client):
+    r = client.post("/config", json={"console_url": "http://evil.example.com:8500"})
+    assert r.status_code == 400
+
+
 def test_status_exposes_attack_map(client):
     s = client.get("/get_status").get_json()
     assert "map" in s
