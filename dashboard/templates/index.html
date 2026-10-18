@@ -249,6 +249,7 @@
                 <button class="ghost" onclick="resetSystem()">Reset System</button>
                 <button class="ghost" onclick="clearLogs()">Clear Logs</button>
             </div>
+            <div class="pill-row" id="probe-result" style="margin-top:14px"></div>
         </div>
 
         <div class="panel">
@@ -422,13 +423,21 @@
             catch (e) { toast(e.message, true); }
         }
         async function testDefenses() {
+            const out = $("#probe-result");
+            out.innerHTML = '<span class="muted">Probing defenses…</span>';
             try {
                 const rl = await api("/test_defense", { type: "rate_limit", ip: "203.0.113.50" });
-                toast(rl.blocked_at ? ("Rate limiter blocked at request " + rl.blocked_at)
-                                    : "Rate limiter allowed all probe requests");
-                await api("/test_defense", { type: "sql_injection", query: "admin' OR '1'='1" });
+                const sq = await api("/test_defense", { type: "sql_injection", query: "admin' OR '1'='1" });
+                const rlCls = rl.blocked_at ? "hold" : "allow";
+                const rlTxt = rl.blocked_at ? ("rate-limited after req " + rl.blocked_at + " of 15")
+                                            : "allowed all 15 (under limit)";
+                const sqCls = (sq.action === "BLOCKED") ? "allow" : "error";
+                out.innerHTML =
+                    `<span class="pill ${rlCls}"><span>RATE LIMITER</span><span>${rlTxt}</span></span>`
+                  + `<span class="pill ${sqCls}"><span>SQLi DETECTOR</span><span>${sq.action} &middot; "admin' OR '1'='1"</span></span>`;
+                toast("Defenses probed");
                 refresh();
-            } catch (e) { toast("Probe failed: " + e.message, true); }
+            } catch (e) { out.innerHTML = `<span class="muted" style="color:var(--danger-color)">Probe failed: ${e.message}</span>`; toast("Probe failed: " + e.message, true); }
         }
 
         // ---- fraud scenario ----
@@ -483,10 +492,11 @@
                 verdict = `<div class="verdict missed"><div class="big">&#10006; FRAUD ALLOWED</div>`
                         + `<div class="muted">engine approved the stolen-session transfer</div></div>`;
             }
+            const hint = r.hint ? `<div class="muted" style="margin-top:10px;color:var(--warning-color)">${r.hint}</div>` : "";
             $("#scenario-result").innerHTML = `<div class="scenario-result">`
                 + decisionCardHtml("Baseline transfer", r.baseline)
                 + decisionCardHtml("Stolen-session transfer &rarr; " + (r.to_acct || "payee"), r.fraud)
-                + verdict + `</div>`;
+                + verdict + `</div>` + hint;
         }
 
         // ---- rendering ----
@@ -740,7 +750,7 @@
                     return;
                 }
                 sel.innerHTML = datasetRows.map((r, i) => `<option value="${i}">${r.label}</option>`).join("");
-                $("#ds-note").textContent = d.count + " transactions from " + d.path;
+                $("#ds-note").textContent = d.count + " " + (d.format || "rows") + " from " + d.path;
             } catch (e) { $("#ds-note").textContent = "Dataset unavailable: " + e.message; }
         }
         function loadFromDataset() {

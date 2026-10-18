@@ -88,6 +88,16 @@ test the full edge-shedding chain, point `RF_TARGET_URL` at the perimeter
 The transaction schema sent to the target matches the RiskFabric contract:
 `{txn_id, ts, from_acct, to_acct, amount, currency, format}`.
 
+**Fraud test with real accounts:** the engine holds any payer not in its
+registry (rule R0), so the baseline must use a *known* account to show a real
+ALLOW-vs-HOLD contrast. Point `RF_DATASET_CSV` at the registry file
+`$RF_DATA/bank/accounts.csv` (built by `python -m vault build`, columns
+`acct,segment`); the dropdown auto-detects that format and loads real known
+payers. It also reads the IBM AML transaction format (`From Bank, Account, …`).
+The bundled `data/HI-Small_Trans.csv` is a tiny sample for offline demos only.
+If the baseline comes back held as "unknown account", the fraud panel shows a
+hint telling you to switch to the registry file.
+
 ### Key endpoints
 
 | Route | Purpose |

@@ -138,6 +138,18 @@ def test_dataset_lists_real_accounts(client):
     assert "-" in row["from_acct"]
 
 
+def test_dataset_reads_registry_accounts_format(client, tmp_path):
+    # RiskFabric registry format: acct,segment -> real known payers.
+    csv = tmp_path / "accounts.csv"
+    csv.write_text("acct,segment\nCUST-001,retail\nCUST-002,business\n")
+    assert client.post("/config", json={"dataset_path": str(csv)}).status_code == 200
+    d = client.get("/dataset").get_json()
+    assert "registry" in (d.get("format") or "")
+    assert d["count"] == 2
+    assert d["rows"][0]["from_acct"] == "CUST-001"
+    assert d["rows"][0]["segment"] == "retail"
+
+
 def test_console_feed_reports_unreachable_without_console(client):
     # Pin to a guaranteed-closed port so the test is deterministic.
     assert client.post("/config", json={"console_url": "http://127.0.0.1:65532"}).status_code == 200

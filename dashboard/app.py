@@ -257,37 +257,63 @@ class ConsoleClient:
 # Dataset reader - seeds the fraud test with real accounts/transactions
 # ---------------------------------------------------------------------------
 def load_dataset(path, limit=200):
-    """Read the synthetic AML dataset. Returns (rows, meta). Never raises."""
+    """
+    Read accounts/transactions to seed the fraud test. Returns (rows, meta).
+
+    Auto-detects two formats so the fraud test always uses accounts the engine
+    actually knows:
+      * Registry format (RiskFabric $RF_DATA/bank/accounts.csv): columns
+        ``acct``,``segment``. The ``acct`` value is a *known* payer, so a small
+        transfer gets ALLOW and a large one gets VERIFY/HOLD - a real contrast.
+      * Transaction format (IBM AML): From Bank / Account / To Bank / To Account
+        / Amount / Currency. Account id uses the <Bank>-<Account> convention.
+    Never raises.
+    """
     import csv
-    rows, err = [], None
+    rows, err, fmt = [], None, None
     try:
         with open(path, newline="", encoding="utf-8") as fh:
             reader = csv.DictReader(fh)
+            fields = {(f or "").strip() for f in (reader.fieldnames or [])}
+            is_registry = "acct" in fields
+            fmt = "registry (accounts.csv)" if is_registry else "transactions"
             for i, r in enumerate(reader):
                 if i >= limit:
                     break
-                frm_bank = (r.get("From Bank") or "").strip()
-                frm_acc = (r.get("Account") or "").strip()
-                to_bank = (r.get("To Bank") or "").strip()
-                to_acc = (r.get("To Account") or "").strip()
-                try:
-                    amount = float(r.get("Amount") or 0)
-                except ValueError:
-                    amount = 0.0
-                from_acct = f"{frm_bank}-{frm_acc}" if frm_bank else frm_acc
-                to_acct = f"{to_bank}-{to_acc}" if to_bank else to_acc
-                rows.append({
-                    "from_acct": from_acct, "to_acct": to_acct,
-                    "amount": amount, "currency": (r.get("Currency") or "USD").strip(),
-                    "type": (r.get("Transaction Type") or "").strip(),
-                    "date": (r.get("Date") or "").strip(),
-                    "label": f"{from_acct} -> {to_acct}  ({amount:g} {(r.get('Currency') or 'USD').strip()})",
-                })
+                if is_registry:
+                    acct = (r.get("acct") or "").strip()
+                    if not acct:
+                        continue
+                    seg = (r.get("segment") or "").strip()
+                    rows.append({
+                        "from_acct": acct, "to_acct": f"MULE-ACC-{1000 + i}",
+                        "amount": 120.0, "currency": "USD", "type": seg or "account",
+                        "segment": seg, "date": "",
+                        "label": acct + (f"  [{seg}]" if seg else ""),
+                    })
+                else:
+                    frm_bank = (r.get("From Bank") or "").strip()
+                    frm_acc = (r.get("Account") or "").strip()
+                    to_bank = (r.get("To Bank") or "").strip()
+                    to_acc = (r.get("To Account") or "").strip()
+                    try:
+                        amount = float(r.get("Amount") or 0)
+                    except ValueError:
+                        amount = 0.0
+                    from_acct = f"{frm_bank}-{frm_acc}" if frm_bank else frm_acc
+                    to_acct = f"{to_bank}-{to_acc}" if to_bank else to_acc
+                    ccy = (r.get("Currency") or "USD").strip()
+                    rows.append({
+                        "from_acct": from_acct, "to_acct": to_acct, "amount": amount,
+                        "currency": ccy, "type": (r.get("Transaction Type") or "").strip(),
+                        "date": (r.get("Date") or "").strip(),
+                        "label": f"{from_acct} -> {to_acct}  ({amount:g} {ccy})",
+                    })
     except FileNotFoundError:
         err = f"dataset not found: {path}"
     except Exception as exc:  # pragma: no cover - defensive
         err = str(exc)
-    return rows, err
+    return rows, {"error": err, "format": fmt}
 
 
 # ---------------------------------------------------------------------------
@@ -461,13 +487,29 @@ class RunManager:
                     "level": "WARNING", "kind": "scenario"})
 
         caught = bool(fraud_res["ok"] and fraud_res["decision"] in ("HOLD", "VERIFY"))
+
+        # Diagnostic: if the baseline (a small, legitimate transfer) is itself
+        # held as an unknown account, the payer isn't in the registry, so the
+        # test can't show a contrast. Tell the user exactly how to fix it.
+        hint = None
+        base_reasons = [str(x).lower() for x in (baseline_res.get("reasons") or [])]
+        base_unknown = baseline_res.get("ok") and baseline_res.get("decision") in ("HOLD", "VERIFY") \
+            and any("unknown" in r or r.startswith("r0") for r in base_reasons)
+        if base_unknown:
+            hint = (f"Baseline was held as an unknown account ({account}). This payer "
+                    "is not in the registry, so the test can't contrast legit vs fraud. "
+                    "Point RF_DATASET_CSV at $RF_DATA/bank/accounts.csv (built by "
+                    "`python -m vault build`) and pick a listed account.")
+        elif not baseline_res.get("ok"):
+            hint = f"Target did not score the baseline: {baseline_res.get('error')}"
+
         result = {
             "ts": _utcnow_iso(),
             "account": account, "to_acct": to_acct, "currency": currency,
             "source_label": source_label,
             "baseline": {"amount": baseline_amount, **baseline_res},
             "fraud": {"amount": fraud_amount, **fraud_res},
-            "caught": caught,
+            "caught": caught, "hint": hint,
             "target_url": self.target.base_url,
         }
         with self._lock:
@@ -673,9 +715,9 @@ def console_feed():
 
 @app.route('/dataset')
 def dataset():
-    rows, err = load_dataset(manager.dataset_path)
-    return jsonify({"path": manager.dataset_path, "count": len(rows),
-                    "rows": rows, "error": err})
+    rows, meta = load_dataset(manager.dataset_path)
+    return jsonify({"path": manager.dataset_path, "count": len(rows), "rows": rows,
+                    "format": meta.get("format"), "error": meta.get("error")})
 
 
 @app.route('/target_status')
