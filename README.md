@@ -1,91 +1,88 @@
 # Banking Security Simulation System
 
-A controlled, judge-ready security-testing tool that demonstrates how a
-synthetic banking defense system responds to scripted attack scenarios. The
-simulator drives traffic through a **real defensive pipeline** (a rate limiter
-and a SQL-injection detector) and, when an allow-listed banking target is
-reachable, records the **actual** response the bank returns.
+A controlled, judge-ready red-team console that fires scripted attack scenarios
+at the **Quantum RiskFabric** banking stack
+([SachinDurairaj06/quantum-riskfabric](https://github.com/SachinDurairaj06/quantum-riskfabric))
+and shows how its defenses — rate limiting, the fraud engine and the quantum-ML
+challenger — actually respond.
 
 > **No fabricated outcomes.** Every number on the dashboard — blocked requests,
-> detection rate, bank responses — comes from a real defense decision or a real
-> HTTP response. When the bank target is unreachable, that is reported as
-> `UNREACHABLE` rather than being counted as a "block".
+> detection rate, engine decisions, bank responses — comes from a real defense
+> decision or a real HTTP response. When the target is unreachable, that is
+> reported as `UNREACHABLE` rather than being counted as a "block".
 
-## What it does
+This project is the **attacker/visualisation side only**. It does not contain or
+run the bank; it points at a RiskFabric instance you host (on loopback).
 
-* **Attack simulation**
-  * DDoS / flood profiles (HTTP, UDP, SYN) — pacing differs per profile.
-  * SQL injection techniques (basic auth-bypass, DDL hijacking, UNION exfil),
-    with benign control traffic interleaved to show false-positive behaviour.
-* **Source simulation** — traffic is spread across a pool of simulated source
-  IP profiles so you can see per-source rate limiting.
-* **Detection visibility** — every generated request is evaluated by the real
-  defense modules in `simulation/defenses/`.
-* **Response verification** — a sampled subset of *allowed* flood requests is
-  forwarded to the configured bank target and the real `ALLOW`/`VERIFY`/`HOLD`
-  response is displayed.
-* **Reliable execution** — thread-safe counters, cooperative cancellation, a
-  one-run-per-kind concurrency cap, bounded thread joins, and a full reset.
-* **Polished dashboard** — live metrics, real throughput and defense-
-  effectiveness charts, a defensive-response panel, a bank-connectivity
-  indicator, and a structured event log.
+## What this system can do
+
+| Capability | Detail |
+| --- | --- |
+| **DDoS / flood simulation** | HTTP, UDP and SYN profiles, multi-threaded, across a pool of simulated source IPs. Each request is evaluated by the real rate limiter; a sampled subset of allowed requests is sent to the RiskFabric channel to record its real `ALLOW`/`VERIFY`/`HOLD`. |
+| **SQL-injection simulation** | Basic auth-bypass, DDL hijacking and UNION exfiltration payloads, interleaved with benign control traffic. Every payload is judged by the real SQL-injection detector; the reported detection rate is genuine. |
+| **Stolen-session fraud test** | Submits a baseline legitimate transfer and an anomalous high-value transfer from the *same* account to a new payee, then shows the engine/ML's real decision and score for each — a direct account-takeover detection check. No credential theft is performed; it only sends transactions. |
+| **Global attack map** | Animated origins → bank-server arcs. Each simulated source IP is pinned to a city; request arcs are green when they reach the server and red/shed at the perimeter when the origin is rate-limited — driven by real block state. |
+| **Live metrics & charts** | Real throughput (req/s from request deltas), real blocked/allowed effectiveness, blocked-IP count, SQLi detection rate. |
+| **Reliable execution** | Thread-safe counters, cooperative cancellation, one-run-per-kind concurrency cap, bounded joins, full reset. |
+| **Safety controls** | Target allowlist (loopback only), per-run thread/duration limits, input validation, configurable target. |
 
 ## Project structure
 
 ```
 simulation/
   attacks/
-    ddos_simulation.py            # DDoS generator -> real rate limiter / bank
+    ddos_simulation.py            # DDoS generator -> real rate limiter / target
     sql_injection_simulation.py   # SQLi payloads  -> real SQLi detector
   defenses/
     rate_limiter.py               # sliding-window rate limiter (+ reset)
     sql_injection_defense.py      # pattern-based SQLi detector (+ reset)
   test_simulation.py              # proves outcomes are real + cancel/reset
 dashboard/
-  app.py                          # Flask control plane (RunManager + routes)
-  templates/index.html            # dashboard UI (blue theme)
+  app.py                          # Flask control plane + RiskFabric TargetClient
+  templates/index.html            # dashboard UI (blue theme, animated attack map)
   static/vendor/chart.umd.js      # vendored Chart.js (offline-friendly)
-  test_app.py                     # route validation / concurrency / reset tests
-bank/                             # LOCAL STUB standing in for the real backend
+  test_app.py                     # route validation / concurrency / scenario tests
 docs/                             # attack-type notes and case studies
 ```
 
 ## Installation
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt   # Flask + requests
 ```
-
-To also run the bundled bank stub and its tests (optional — the real backend
-lives on a separate device), install the extras listed at the bottom of
-`requirements.txt`.
 
 ## Running
 
-1. *(Optional)* start the bank stub so response verification has a target:
-   ```bash
-   python -m uvicorn bank.main:app --host 127.0.0.1 --port 9000
-   ```
-2. Start the dashboard:
+1. Start your RiskFabric stack on loopback (see that repo's README), e.g. the
+   bank channel on `:9000` or the perimeter on `:8000`.
+2. Start this dashboard:
    ```bash
    python dashboard/app.py
    ```
 3. Open <http://localhost:5001>.
 
-If the bank stub is not running, DDoS runs still execute and are verified
-against the rate limiter; bank responses are reported as `UNREACHABLE`.
+If the target is not running, attacks still execute against the local rate
+limiter / SQLi detector, and target responses are reported as `UNREACHABLE`.
 
 ### Configuration
 
 | Setting | Env var | Default |
 | --- | --- | --- |
-| Bank target URL | `RF_BANK_URL` | `http://127.0.0.1:9000` |
+| RiskFabric target URL | `RF_TARGET_URL` | `http://127.0.0.1:9000` |
+| Channel (decision) path | `RF_PAY_PATH` | `/bank/pay` |
+| Engine (score) path | `RF_ENGINE_PATH` | `/engine/pay` |
+| Health path | `RF_HEALTH_PATH` | `/bank/health` |
 | Max threads per run | `SIM_MAX_THREADS` | `20` |
 | Max run duration (s) | `SIM_MAX_DURATION` | `120` |
 
-The bank target is restricted to an **allowlist** of loopback lab hosts
-(`127.0.0.1`, `localhost`, `::1`). Runtime config changes are rejected for any
-host outside the allowlist.
+The target host is restricted to a loopback **allowlist** (`127.0.0.1`,
+`localhost`, `::1`); runtime config changes to any other host are rejected. To
+test the full edge-shedding chain, point `RF_TARGET_URL` at the perimeter
+(`http://127.0.0.1:8000`); to read raw engine decisions, point it at the bank
+(`:9000`).
+
+The transaction schema sent to the target matches the RiskFabric contract:
+`{txn_id, ts, from_acct, to_acct, amount, currency, format}`.
 
 ### Key endpoints
 
@@ -93,22 +90,23 @@ host outside the allowlist.
 | --- | --- |
 | `POST /start_ddos`, `POST /start_sql` | start a run (validated) |
 | `POST /stop_ddos`, `POST /stop_sql`, `POST /stop_all` | cancel runs |
-| `POST /reset` | cancel runs, clear defenses, logs and counters |
+| `POST /run_scenario` | run the stolen-session fraud test |
+| `POST /reset` | cancel runs, clear defenses, scenario, logs and counters |
 | `POST /test_defense` | single-input probe of a defense |
-| `GET /get_status` | live state, stats, bank responses, logs |
-| `GET /bank_status` | bank-target connectivity |
-| `GET/POST /config` | view / adjust bank target + verification |
+| `GET /get_status` | live state, stats, attack-map data, scenario, logs |
+| `GET /target_status` | RiskFabric connectivity |
+| `GET/POST /config` | view / adjust target + verification |
 
 ## Testing
 
 ```bash
 python -m pytest simulation/test_simulation.py dashboard/test_app.py -q
-# plus the bank stub tests (needs the optional extras):
-python -m pytest bank/test_main.py -q
 ```
 
 ## Safety
 
-All testing is confined to the authorized synthetic environment on loopback.
-The tool adds no stealth, evasion, or third-party targeting; the target
-allowlist and execution limits are enforced in `dashboard/app.py`.
+All testing is confined to the authorized RiskFabric environment on loopback.
+The tool adds no stealth, evasion or third-party targeting; the target
+allowlist and execution limits are enforced in `dashboard/app.py`. The
+"stolen-session" scenario is a fraud-detection test: it only submits
+transactions and reports the engine's response.

@@ -100,7 +100,34 @@ def test_rate_limit_probe_blocks(client):
     assert 1 <= data["blocked_at"] <= 15
 
 
-def test_bank_config_rejects_non_allowlisted_host(client):
-    r = client.post("/config", json={"bank_url": "http://evil.example.com:9000"})
+def test_target_config_rejects_non_allowlisted_host(client):
+    r = client.post("/config", json={"target_url": "http://evil.example.com:9000"})
     assert r.status_code == 400
     assert "allowlist" in r.get_json()["message"]
+
+
+def test_scenario_validation(client):
+    r = client.post("/run_scenario", json={"fraud_amount": -5})
+    assert r.status_code == 400
+
+
+def test_scenario_reports_unreachable_without_fabricating(client):
+    # With no RiskFabric target running, the scenario must report the real
+    # unreachable outcome - never a fabricated "caught" result.
+    r = client.post("/run_scenario", json={
+        "account": "ACC-123", "to_acct": "MULE-9", "currency": "USD",
+        "baseline_amount": 100, "fraud_amount": 50000, "source": "Moscow"})
+    assert r.status_code == 200
+    result = r.get_json()["result"]
+    assert result["account"] == "ACC-123"
+    assert result["fraud"]["ok"] is False          # target not running in tests
+    assert result["fraud"]["error"]                 # a real error string
+    assert result["caught"] is False                # not fabricated
+
+
+def test_status_exposes_attack_map(client):
+    s = client.get("/get_status").get_json()
+    assert "map" in s
+    assert s["map"]["server"]["label"]
+    assert len(s["map"]["sources"]) >= 1
+    assert "lat" in s["map"]["sources"][0] and "ip" in s["map"]["sources"][0]

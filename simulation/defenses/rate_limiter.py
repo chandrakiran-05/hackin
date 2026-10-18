@@ -65,6 +65,11 @@ class RateLimiter:
                 self.blocked_ips.remove(ip)
                 print(f"[DEFENSE] IP {ip} unblocked")
 
+    def blocked_ip_set(self):
+        """Return a thread-safe snapshot of the currently blocked IPs."""
+        with self.lock:
+            return set(self.blocked_ips)
+
     def reset(self):
         """Clear all rate-limit state and cancel pending unblock timers."""
         with self.lock:

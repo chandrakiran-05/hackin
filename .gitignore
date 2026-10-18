@@ -11,6 +11,3 @@ temp/
 .DS_Store
 
 # Large raw data (keep splits + features, drop the full transaction dump if huge)
-
-# Bank stub runtime output
-data/bank/postings.jsonl
